@@ -157,6 +157,10 @@ def _bloc_reponse(
 ) -> list[dict]:
     """Rend une formulation validée et sa provenance.
 
+    Le repère (`a1`, `a2`, …) ouvre la ligne de provenance : c'est lui que
+    l'annotateur choisit dans les jobs `FORMULATION_CIBLE` et
+    `FORMULATIONS_A_RETIRER` du projet A.
+
     Args:
         reponse: Formulation validée.
         generateur: Générateur d'identifiants du document.
@@ -170,8 +174,8 @@ def _bloc_reponse(
         {"backgroundColor": fond, "padding": "4px 8px"},
     )
     provenance = (
-        f"origine : {reponse.origine} · auteur : {reponse.auteur} · "
-        f"date : {reponse.date}"
+        f"{reponse.id} · origine : {reponse.origine} · "
+        f"auteur : {reponse.auteur} · date : {reponse.date}"
     )
     if reponse.run_id:
         provenance += f" · run : {reponse.run_id}"

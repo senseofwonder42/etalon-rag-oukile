@@ -16,8 +16,9 @@ from .interfaces import INTERFACE_REFERENTIEL
 from .labels import (
     auteur_de,
     categorie,
+    categories,
     charger_metadata,
-    dernier_label,
+    labels_humains,
     transcription,
 )
 from .matching import similarite_lexicale
@@ -46,8 +47,13 @@ CHAMPS_ENTREE = [
     "labels.labelType",
 ]
 
-_MOTIF_SOURCE = re.compile(r"^(?P<doc>[^:]+?)(?::(?P<page>\d+))?$")
+_MOTIF_SOURCE = re.compile(r"^(?P<doc>[^:]+?)(?::p?(?P<page>\d+))?$", re.I)
+_MOTIF_PAGE_SEULE = re.compile(r"^p\.?\s*(?P<page>\d+)$", re.I)
 _SEPARATEURS_SOURCES = re.compile(r"[,\n;]")
+
+
+class CibleIntrouvableError(ValueError):
+    """Le repère de formulation désigné n'existe pas sur l'entrée."""
 
 
 class RapportPromotion(BaseModel):
@@ -63,7 +69,12 @@ class RapportPromotion(BaseModel):
     entrees_revalidees: int = 0
     entrees_archivees: int = 0
     desaccords_juge_metier: int = 0
+    labels_referentiel_consommes: int = 0
+    formulations_remplacees: int = 0
+    formulations_retirees: int = 0
+    cibles_introuvables: list[str] = Field(default_factory=list)
     sources_illisibles: list[str] = Field(default_factory=list)
+    sources_retirees: list[str] = Field(default_factory=list)
     details: list[dict] = Field(default_factory=list)
 
 
@@ -226,21 +237,18 @@ def journaliser_variante(
 # --------------------------------------------------------------------- #
 # Règles pures : variantes et sources
 # --------------------------------------------------------------------- #
-def _prochain_id_reponse(entree: EntreeReferentiel) -> str:
-    """Calcule l'identifiant de la prochaine formulation.
+def renumeroter(entree: EntreeReferentiel) -> None:
+    """Renumérote les formulations en `a1`, `a2`, … dans l'ordre courant.
+
+    Les repères servent de catégories au job `FORMULATION_CIBLE` du
+    projet A : ils doivent rester dans la plage `a1`–`a5` fixée par le
+    plafond de variantes, sans trou après un retrait.
 
     Args:
-        entree: Entrée concernée.
-
-    Returns:
-        Un identifiant de la forme `a1`, `a2`, …
+        entree: Entrée à renuméroter, modifiée sur place.
     """
-    numeros = [
-        int(reponse.id[1:])
-        for reponse in entree.answers
-        if reponse.id[:1] == "a" and reponse.id[1:].isdigit()
-    ]
-    return f"a{max(numeros, default=0) + 1}"
+    for numero, reponse in enumerate(entree.answers, start=1):
+        reponse.id = f"a{numero}"
 
 
 def selectionner_variantes(
@@ -329,10 +337,10 @@ def ajouter_variante(
             )
             return False
 
-    avant = [reponse.id for reponse in entree.answers]
+    avant = [reponse.text for reponse in entree.answers]
     entree.answers.append(
         Answer(
-            id=_prochain_id_reponse(entree),
+            id=f"a{len(entree.answers) + 1}",
             text=texte,
             origine=origine,
             auteur=auteur,
@@ -341,14 +349,131 @@ def ajouter_variante(
         )
     )
     entree.answers = selectionner_variantes(entree.answers, plafond)
-    return [reponse.id for reponse in entree.answers] != avant
+    renumeroter(entree)
+    return [reponse.text for reponse in entree.answers] != avant
+
+
+def remplacer_formulation(
+    entree: EntreeReferentiel,
+    cible: str,
+    texte: str,
+    auteur: str,
+    date: str,
+    seuil_quasi_doublon: float,
+) -> bool:
+    """Remplace le texte d'une formulation désignée par son repère.
+
+    Le repère et la place de la formulation sont conservés ; l'origine
+    repasse à `metier` et le `run_id` est effacé, la formulation n'étant
+    plus celle produite par la RAG.
+
+    Args:
+        entree: Entrée à corriger, modifiée sur place.
+        cible: Repère de la formulation, `a1` à `a5`.
+        texte: Texte corrigé.
+        auteur: Métier qui a corrigé.
+        date: Date de la correction, au format ISO.
+        seuil_quasi_doublon: Similarité au-dessus de laquelle la
+            correction est signalée comme redondante avec une autre
+            formulation. Elle est appliquée quand même : c'est un
+            arbitrage métier explicite.
+
+    Returns:
+        `True` si le texte a changé.
+
+    Raises:
+        CibleIntrouvableError: Si aucune formulation ne porte ce repère.
+    """
+    texte = (texte or "").strip()
+    if not texte:
+        return False
+    if entree.repli_texte:
+        logger.error(
+            "Entrée {} repliée : remplacement refusé, les textes ne sont "
+            "pas lisibles en metadata.",
+            entree.question_id,
+        )
+        return False
+
+    trouvee = next((r for r in entree.answers if r.id == cible), None)
+    if trouvee is None:
+        raise CibleIntrouvableError(
+            f"L'entrée {entree.question_id} n'a pas de formulation "
+            f"« {cible} » (repères existants : "
+            f"{', '.join(r.id for r in entree.answers) or 'aucun'})."
+        )
+    if trouvee.text.strip() == texte:
+        return False
+
+    for autre in entree.answers:
+        if autre.id == cible:
+            continue
+        if similarite_lexicale(autre.text, texte) >= seuil_quasi_doublon:
+            logger.warning(
+                "La correction de {} sur {} est très proche de {} : les "
+                "deux formulations sont conservées.",
+                cible,
+                entree.question_id,
+                autre.id,
+            )
+
+    trouvee.text = texte
+    trouvee.origine = "metier"
+    trouvee.auteur = auteur
+    trouvee.date = date
+    trouvee.run_id = None
+    return True
+
+
+def retirer_formulations(
+    entree: EntreeReferentiel, cibles: list[str]
+) -> tuple[list[str], list[str]]:
+    """Retire du référentiel les formulations désignées.
+
+    Args:
+        entree: Entrée à corriger, modifiée sur place.
+        cibles: Repères des formulations à retirer.
+
+    Returns:
+        Le couple (textes retirés, repères introuvables). La dernière
+        formulation d'une entrée n'est jamais retirée : une entrée sans
+        réponse ne servirait plus à rien.
+    """
+    introuvables = [
+        cible
+        for cible in cibles
+        if not any(r.id == cible for r in entree.answers)
+    ]
+    a_retirer = set(cibles) - set(introuvables)
+    if not a_retirer:
+        return [], introuvables
+
+    restantes = [r for r in entree.answers if r.id not in a_retirer]
+    if not restantes:
+        logger.warning(
+            "Retrait refusé sur {} : il ne resterait aucune formulation.",
+            entree.question_id,
+        )
+        return [], introuvables
+
+    retires = [r.text for r in entree.answers if r.id in a_retirer]
+    entree.answers = restantes
+    renumeroter(entree)
+    return retires, introuvables
 
 
 def parser_sources(texte: str) -> tuple[list[Source], list[str]]:
     """Analyse une liste de sources au format `doc.pdf:12, autre.pdf:3`.
 
-    L'analyse est tolérante : une entrée illisible est signalée et ignorée,
-    sans faire échouer le lot.
+    Plusieurs pages d'un même document s'écrivent en répétant la page
+    seule après le document : `doc1.pdf:p12, p14` donne deux sources sur
+    `doc1.pdf`. Le préfixe `p` est facultatif sur une page qui suit un
+    document (`doc1.pdf:12`), mais **obligatoire** sur une page seule,
+    sans quoi un fragment numérique serait indiscernable d'un nom de
+    document.
+
+    L'analyse est tolérante : un fragment illisible est signalé et
+    ignoré, sans faire échouer le lot.
 
     Args:
         texte: Saisie de l'annotateur.
@@ -358,18 +483,31 @@ def parser_sources(texte: str) -> tuple[list[Source], list[str]]:
     """
     sources: list[Source] = []
     illisibles: list[str] = []
+    dernier_doc: str | None = None
     for fragment in _SEPARATEURS_SOURCES.split(texte or ""):
         nettoye = fragment.strip()
         if not nettoye:
             continue
+
+        page_seule = _MOTIF_PAGE_SEULE.match(nettoye)
+        if page_seule:
+            if dernier_doc is None:
+                illisibles.append(nettoye)
+                continue
+            sources.append(
+                Source(doc_id=dernier_doc, page=int(page_seule["page"]))
+            )
+            continue
+
         trouve = _MOTIF_SOURCE.match(nettoye)
         if not trouve:
             illisibles.append(nettoye)
             continue
         page = trouve.group("page")
+        dernier_doc = trouve.group("doc").strip()
         sources.append(
             Source(
-                doc_id=trouve.group("doc").strip(),
+                doc_id=dernier_doc,
                 page=int(page) if page else None,
             )
         )
@@ -604,11 +742,8 @@ def promouvoir_lot(
         entree.question_id: entree
         for entree in charger_entrees(kili, id_referentiel)
     }
-    (
-        rapport.entrees_revalidees,
-        rapport.entrees_archivees,
-    ) = appliquer_labels_referentiel(
-        kili, id_referentiel, entrees, parametres
+    appliquer_labels_referentiel(
+        kili, id_referentiel, entrees, parametres, rapport
     )
 
     arbitres = lire_cas_arbitres(kili, id_revue)
@@ -717,17 +852,129 @@ def promouvoir_lot(
     return rapport
 
 
+def _appliquer_un_label(
+    entree: EntreeReferentiel,
+    label: dict,
+    parametres: Parametres,
+    rapport: RapportPromotion,
+) -> bool:
+    """Applique un arbitrage du projet A à une entrée.
+
+    Args:
+        entree: Entrée à mettre à jour, modifiée sur place.
+        label: Label humain renvoyé par Kili.
+        parametres: Paramètres d'exécution.
+        rapport: Rapport à compléter.
+
+    Returns:
+        `True` si l'entrée a changé.
+    """
+    reponse = label.get("jsonResponse") or {}
+    auteur = auteur_de(label)
+    date = (label.get("createdAt") or "")[:10] or aujourdhui()
+    change = False
+
+    toujours_valide = categorie(reponse, "ENTREE_TOUJOURS_VALIDE")
+    if toujours_valide == "OUI" and (
+        entree.statut != "ACTIF" or entree.derniere_verification != date
+    ):
+        entree.statut = "ACTIF"
+        entree.derniere_verification = date
+        rapport.entrees_revalidees += 1
+        change = True
+    elif toujours_valide == "NON" and entree.statut != "ARCHIVE":
+        entree.statut = "ARCHIVE"
+        entree.derniere_verification = date
+        rapport.entrees_archivees += 1
+        change = True
+
+    texte = transcription(reponse, "REPONSE_VALIDEE")
+    cible = categorie(reponse, "FORMULATION_CIBLE")
+    if texte and cible:
+        try:
+            if remplacer_formulation(
+                entree,
+                cible=cible,
+                texte=texte,
+                auteur=auteur,
+                date=date,
+                seuil_quasi_doublon=parametres.seuil_quasi_doublon,
+            ):
+                rapport.formulations_remplacees += 1
+                change = True
+        except CibleIntrouvableError as erreur:
+            logger.warning("{}", erreur)
+            rapport.cibles_introuvables.append(str(erreur))
+    elif texte and ajouter_variante(
+        entree,
+        texte=texte,
+        origine="metier",
+        auteur=auteur,
+        date=date,
+        run_id=None,
+        seuil_quasi_doublon=parametres.seuil_quasi_doublon,
+        plafond=parametres.plafond_variantes,
+    ):
+        rapport.variantes_ajoutees += 1
+        change = True
+    elif cible and not texte:
+        logger.warning(
+            "Repère {} désigné sur {} sans texte de remplacement : "
+            "ignoré.",
+            cible,
+            entree.question_id,
+        )
+
+    a_retirer = categories(reponse, "FORMULATIONS_A_RETIRER")
+    if a_retirer:
+        retires, introuvables = retirer_formulations(entree, a_retirer)
+        rapport.formulations_retirees += len(retires)
+        rapport.cibles_introuvables.extend(
+            f"{entree.question_id} : repère {repere} introuvable"
+            for repere in introuvables
+        )
+        change = change or bool(retires)
+
+    sources_texte = transcription(reponse, "SOURCES_CORRIGEES")
+    if sources_texte:
+        sources, illisibles = parser_sources(sources_texte)
+        rapport.sources_illisibles.extend(
+            f"{entree.question_id} : {fragment}" for fragment in illisibles
+        )
+        if sources:
+            retirees = {
+                (s.doc_id, s.page) for s in entree.sources
+            } - {(s.doc_id, s.page) for s in sources}
+            if remplacer_sources(entree, sources):
+                change = True
+            for doc_id, page in sorted(retirees):
+                logger.info(
+                    "Source retirée de {} par correction : {}:{}",
+                    entree.question_id,
+                    doc_id,
+                    page,
+                )
+                rapport.sources_retirees.append(
+                    f"{entree.question_id} : {doc_id}:{page}"
+                )
+    return change
+
+
 def appliquer_labels_referentiel(
     kili: object,
     project_id: str,
     entrees: dict[str, EntreeReferentiel],
     parametres: Parametres,
-) -> tuple[int, int]:
-    """Applique les arbitrages de revérification portés par le projet A.
+    rapport: RapportPromotion,
+) -> None:
+    """Applique les arbitrages portés par les assets du projet A.
 
-    Le job `ENTREE_TOUJOURS_VALIDE` fait revenir une entrée à `ACTIF` ou la
-    passe en `ARCHIVE` ; les jobs `REPONSE_VALIDEE` et `SOURCES_CORRIGEES`
-    complètent l'entrée au passage.
+    Tous les labels humains créés **depuis le filigrane**
+    `derniere_promotion` sont appliqués, du plus ancien au plus récent :
+    un métier qui corrige deux formulations enregistre deux fois, et les
+    deux corrections sont reprises. Le filigrane est ensuite avancé, ce
+    qui rend l'opération idempotente sans dépendre de la comparaison des
+    états.
 
     Args:
         kili: Client Kili.
@@ -735,67 +982,34 @@ def appliquer_labels_referentiel(
         entrees: Entrées du référentiel, par `question_id`, modifiées sur
             place.
         parametres: Paramètres d'exécution.
-
-    Returns:
-        Le couple (entrées revalidées, entrées archivées).
+        rapport: Rapport à compléter.
     """
-    revalidees = 0
-    archivees = 0
     for asset in kili.assets(project_id=project_id, fields=CHAMPS_ENTREE):
-        label = dernier_label(asset.get("labels") or [])
-        if label is None:
-            continue
         metadata = charger_metadata(asset.get("jsonMetadata"))
         entree = entrees.get(metadata.get("question_id", ""))
         if entree is None:
             continue
 
-        reponse = label.get("jsonResponse") or {}
-        date = (label.get("createdAt") or "")[:10] or aujourdhui()
+        filigrane = entree.derniere_promotion or ""
+        nouveaux = [
+            label
+            for label in labels_humains(asset.get("labels") or [])
+            if (label.get("createdAt") or "") > filigrane
+        ]
+        if not nouveaux:
+            continue
+
         change = False
-
-        toujours_valide = categorie(reponse, "ENTREE_TOUJOURS_VALIDE")
-        if toujours_valide == "OUI" and (
-            entree.statut != "ACTIF" or entree.derniere_verification != date
-        ):
-            entree.statut = "ACTIF"
-            entree.derniere_verification = date
-            revalidees += 1
-            change = True
-        elif toujours_valide == "NON" and entree.statut != "ARCHIVE":
-            entree.statut = "ARCHIVE"
-            entree.derniere_verification = date
-            archivees += 1
-            change = True
-
-        texte = transcription(reponse, "REPONSE_VALIDEE")
-        if texte and ajouter_variante(
-            entree,
-            texte=texte,
-            origine="metier",
-            auteur=auteur_de(label),
-            date=date,
-            run_id=None,
-            seuil_quasi_doublon=parametres.seuil_quasi_doublon,
-            plafond=parametres.plafond_variantes,
-        ):
-            change = True
-
-        sources_texte = transcription(reponse, "SOURCES_CORRIGEES")
-        if sources_texte:
-            sources, illisibles = parser_sources(sources_texte)
-            for fragment in illisibles:
-                logger.warning(
-                    "Source illisible sur {} : {}",
-                    entree.question_id,
-                    fragment,
-                )
-            if sources and remplacer_sources(entree, sources):
-                change = True
+        for label in nouveaux:
+            change = (
+                _appliquer_un_label(entree, label, parametres, rapport)
+                or change
+            )
+        rapport.labels_referentiel_consommes += len(nouveaux)
 
         if change:
             entree.version += 1
-            ecrire_entree(
-                kili, project_id, entree, parametres.taille_max_metadata
-            )
-    return revalidees, archivees
+        entree.derniere_promotion = nouveaux[-1].get("createdAt") or ""
+        ecrire_entree(
+            kili, project_id, entree, parametres.taille_max_metadata
+        )

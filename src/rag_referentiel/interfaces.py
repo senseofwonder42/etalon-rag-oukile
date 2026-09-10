@@ -7,6 +7,13 @@ projets LLM, absents de cette version).
 """
 
 FORMAT_SOURCES = "doc.pdf:12, autre.pdf:3"
+#: Plusieurs pages d'un même document : répéter la page seule, préfixée
+#: par « p », après le document.
+FORMAT_SOURCES_MULTIPAGE = "doc.pdf:p12, p14, autre.pdf:3"
+#: Repères des formulations, tels qu'affichés sur la carte. Le plafond de
+#: variantes étant de 5 et les repères renumérotés à chaque écriture, la
+#: liste est finie et stable.
+REPERES_FORMULATIONS = ("a1", "a2", "a3", "a4", "a5")
 
 
 def _job_radio(
@@ -35,6 +42,24 @@ def _job_radio(
             "input": "radio",
         },
     }
+
+
+def _job_cases_a_cocher(
+    instruction: str, categories: dict[str, str], requis: bool
+) -> dict:
+    """Construit un job de classification à choix multiple.
+
+    Args:
+        instruction: Consigne affichée à l'annotateur.
+        categories: Correspondance code de catégorie -> libellé affiché.
+        requis: Si le job doit être rempli pour pouvoir valider.
+
+    Returns:
+        Le dictionnaire de job attendu par Kili.
+    """
+    job = _job_radio(instruction, categories, requis)
+    job["content"]["input"] = "checkbox"
+    return job
 
 
 def _job_transcription(instruction: str, requis: bool) -> dict:
@@ -66,17 +91,42 @@ INTERFACE_REFERENTIEL: dict = {
             categories={"OUI": "Oui", "NON": "Non"},
             requis=True,
         ),
+        "FORMULATION_CIBLE": _job_radio(
+            instruction=(
+                "Pour corriger une formulation existante, choisir son "
+                "repère tel qu'il apparaît sur la carte, puis écrire le "
+                "texte corrigé ci-dessous. Laisser vide pour ajouter une "
+                "nouvelle formulation."
+            ),
+            categories={
+                repere: repere for repere in REPERES_FORMULATIONS
+            },
+            requis=False,
+        ),
         "REPONSE_VALIDEE": _job_transcription(
             instruction=(
-                "Ajouter ou corriger une formulation validée de la réponse "
-                "(laisser vide si rien à changer)."
+                "Texte de la formulation : elle remplace la formulation "
+                "désignée ci-dessus, ou s'ajoute aux formulations "
+                "existantes si aucun repère n'est choisi."
             ),
+            requis=False,
+        ),
+        "FORMULATIONS_A_RETIRER": _job_cases_a_cocher(
+            instruction=(
+                "Repères des formulations à retirer du référentiel "
+                "(plusieurs choix possibles)."
+            ),
+            categories={
+                repere: repere for repere in REPERES_FORMULATIONS
+            },
             requis=False,
         ),
         "SOURCES_CORRIGEES": _job_transcription(
             instruction=(
-                "Sources corrigées, au format "
-                f"« {FORMAT_SOURCES} » (laisser vide si rien à changer)."
+                "Liste corrigée des sources, qui **remplace** la liste "
+                f"actuelle. Format « {FORMAT_SOURCES} » ; plusieurs pages "
+                f"d'un même document : « {FORMAT_SOURCES_MULTIPAGE} ». "
+                "Laisser vide si rien à changer."
             ),
             requis=False,
         ),
@@ -124,8 +174,9 @@ INTERFACE_REVUE: dict = {
         ),
         "SOURCES_CORRIGEES": _job_transcription(
             instruction=(
-                "Sources corrigées, au format "
-                f"« {FORMAT_SOURCES} » (laisser vide si rien à changer)."
+                "Liste corrigée des sources, qui **remplace** la liste "
+                f"citée. Format « {FORMAT_SOURCES} » ; plusieurs pages "
+                f"d'un même document : « {FORMAT_SOURCES_MULTIPAGE} »."
             ),
             requis=False,
         ),

@@ -73,13 +73,25 @@ parcourir dans l'ordre, la première fois.
     `VIDEO_LEGACY` en plus de ce qui était annoncé. Aucun type LLM,
     aucun module `kili.llm`, aucune clé `level` : confirmé par lecture du
     paquet installé.
-11. **Catégories des `json_interface`.** Les catégories sont écrites
+11. **Job à cases à cocher.** `FORMULATIONS_A_RETIRER` utilise
+    `input: "checkbox"`, reconnu par le SDK
+    (`services/label_data_parsing/category.py`). Vérifier que la réponse
+    renvoyée est bien une liste de catégories, et que le job s'affiche
+    en cases à cocher.
+12. **Course sur les repères de formulation.** Les formulations sont
+    renumérotées à chaque écriture. Si `promote.py` tourne pendant qu'un
+    métier a une carte ouverte, le repère qu'il a sous les yeux peut
+    avoir changé au moment où il enregistre. En pratique annotation et
+    promotion ne sont pas concurrentes ; si elles le deviennent, il
+    faudra passer les repères en identifiants stables et étendre les
+    catégories du job au-delà de `a5`.
+13. **Catégories des `json_interface`.** Les catégories sont écrites
     `{"CODE": {"name": "Libellé", "children": []}}`, sans clé `id`. Le SDK
     ne valide pas le `json_interface` : il le sérialise et l'envoie.
     Vérifier que les deux projets s'ouvrent et que les jobs s'affichent
     comme attendu ; ajouter un `id` par catégorie si l'interface les
     exige.
-12. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
+14. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
     `anthropic`. Le prompt attend un objet JSON ; une réponse illisible
     est traitée comme « non conforme, confiance nulle », ce qui envoie le
     cas en revue plutôt que de le passer sous silence.
@@ -150,6 +162,7 @@ Les schémas pydantic de `schemas.py` sont sérialisés dans le
     {"doc_id": "cg_auto_2024.pdf", "page": 12, "doc_version": "sha1:9f3c…"}
   ],
   "derniere_verification": "2026-07-18",
+  "derniere_promotion": "2026-07-18T14:02:11.000Z",
   "repli_texte": false
 }
 ```
@@ -159,6 +172,8 @@ Les schémas pydantic de `schemas.py` sont sérialisés dans le
 - `origine` ∈ `metier`, `rag_valide`, `rag_corrige`.
 - `auteur` est le **métier qui a arbitré dans le projet B**, recopié depuis
   le label ; ce n'est pas la clé d'API qui écrit dans A.
+- `derniere_promotion` est le **filigrane** de la campagne du projet A :
+  horodatage du dernier label déjà consommé par `promote.py`.
 - Il n'existe **aucune notion de contre-exemple** : un verdict `NON` est
   compté au rapport et n'écrit rien.
 
@@ -211,13 +226,50 @@ est journalisé en `ERROR`.
 | Job | Type | Requis | Rôle |
 | --- | --- | --- | --- |
 | `ENTREE_TOUJOURS_VALIDE` | radio `OUI` / `NON` | oui | campagne de revérification |
-| `REPONSE_VALIDEE` | transcription | non | ajouter ou corriger une formulation |
-| `SOURCES_CORRIGEES` | transcription | non | liste au format `doc.pdf:12, autre.pdf:3` |
+| `FORMULATION_CIBLE` | radio `a1` … `a5` | non | repère de la formulation à corriger ; vide = ajout |
+| `REPONSE_VALIDEE` | transcription | non | texte de la formulation, ajoutée ou substituée |
+| `FORMULATIONS_A_RETIRER` | cases à cocher `a1` … `a5` | non | retirer une ou plusieurs formulations |
+| `SOURCES_CORRIGEES` | transcription | non | liste corrigée, qui **remplace** la liste actuelle |
 
 - `OUI` sur `ENTREE_TOUJOURS_VALIDE` repasse l'entrée en `ACTIF` et
   actualise `derniere_verification` ; `NON` la passe en `ARCHIVE`.
-- Les trois jobs sont `CLASSIFICATION` ou `TRANSCRIPTION`, sans clé
+- Les cinq jobs sont `CLASSIFICATION` ou `TRANSCRIPTION`, sans clé
   `level` : elle n'existe pas en 2.142.1.
+
+### Corriger une formulation parmi plusieurs
+
+Chaque formulation porte un **repère** — `a1`, `a2`, … — affiché en tête
+de sa ligne de provenance sur la carte. C'est lui qu'on désigne :
+
+| Ce que remplit le métier | Effet |
+| --- | --- |
+| `REPONSE_VALIDEE` seule | la formulation est **ajoutée**, sauf quasi-doublon |
+| `FORMULATION_CIBLE = a2` + `REPONSE_VALIDEE` | `a2` est **remplacée** ; son origine repasse à `metier`, son `run_id` est effacé |
+| `FORMULATION_CIBLE` sans texte | incohérent : ignoré et journalisé |
+| repère inexistant (`a5` sur une entrée à trois formulations) | signalé dans `cibles_introuvables` du rapport, le lot continue |
+| `FORMULATIONS_A_RETIRER = a1, a3` | les deux formulations sont retirées ; la **dernière** formulation d'une entrée n'est jamais retirable |
+
+Un remplacement ciblé **n'est pas soumis à la règle du quasi-doublon** :
+une petite correction de `a2` est un arbitrage métier explicite, pas une
+variante à écarter. Si le texte corrigé devient très proche d'une autre
+formulation, les deux sont conservées et un avertissement est journalisé.
+
+Après tout retrait ou ajout, les formulations sont **renumérotées**
+`a1`, `a2`, … sans trou : les repères restent dans la plage `a1`–`a5`
+fixée par le plafond de variantes, et la liste de catégories du job reste
+donc finie et stable.
+
+### Corriger plusieurs formulations
+
+Une correction par enregistrement : on désigne `a2`, on sauvegarde, on
+rouvre l'asset et on désigne `a4`. `promote.py` consomme **tous** les
+labels humains créés depuis le filigrane `derniere_promotion` de
+l'entrée, du plus ancien au plus récent, puis avance le filigrane. C'est
+lui qui porte l'idempotence de la campagne : un label déjà consommé n'est
+jamais rejoué.
+
+Le retrait, lui, est multiple d'un coup : `FORMULATIONS_A_RETIRER` est un
+job à cases à cocher.
 
 ## `json_interface` du projet B — Revue prod
 
@@ -239,8 +291,34 @@ Ce que `promote.py` en fait :
 | `NON` | rien n'est écrit, seulement compté au rapport |
 | `MEME_QUESTION = NON` sur un cas incertain | **nouvelle** entrée créée dans A |
 | `MEME_QUESTION` non rempli sur un cas incertain | le cas reste `EN_ATTENTE`, rien n'est décidé à sa place |
-| `SOURCES_CORRIGEES` renseignée | remplace `sources[]` (les `doc_version` connues sont reportées) |
+| `SOURCES_CORRIGEES` renseignée | remplace `sources[]` (les `doc_version` connues sont reportées) ; les sources retirées sont listées au rapport |
 | `SOURCES_PERTINENTES = OUI`, sans correction | les sources de l'occurrence complètent `sources[]` |
+
+### Format des sources
+
+```
+cg_auto_2024.pdf:12, guide_sinistres.pdf:3
+```
+
+Plusieurs pages d'un même document : répéter la page seule, **préfixée
+par `p`**, après le document.
+
+```
+cg_auto_2024.pdf:p12, p14, p31, guide_sinistres.pdf:2, p7
+```
+
+donne cinq sources : trois sur `cg_auto_2024.pdf` (pages 12, 14, 31) et
+deux sur `guide_sinistres.pdf` (pages 2 et 7). Le préfixe `p` est
+facultatif juste après un document (`doc.pdf:12`) mais **obligatoire**
+sur une page seule, faute de quoi un fragment numérique serait
+indiscernable d'un nom de document. Une page seule sans document qui la
+précède, ou tout autre fragment illisible, est signalée dans
+`sources_illisibles` du rapport sans faire échouer le lot.
+
+La saisie **remplace la liste entière** : c'est ce qui permet de corriger
+plusieurs sources d'un coup, mais taper une seule ligne supprime les
+autres. Les suppressions sont listées dans `sources_retirees` du rapport
+de promotion.
 
 ---
 
@@ -416,12 +494,25 @@ uv run python scripts/demo.py --teardown --project-id <ID>
  "cg_habitation_2024.pdf": "sha1:41d8ec5590aa"}
 ```
 
+### Variables d'environnement
+
+| Variable | Rôle |
+| --- | --- |
+| `KILI_API_KEY` | obligatoire pour tout script qui parle à l'instance |
+| `KILI_API_ENDPOINT` | endpoint GraphQL ; SaaS par défaut |
+| `KILI_CA_BUNDLE` | chemin d'un bundle de certificats, pour une instance derrière un proxy d'entreprise. Transmis à `Kili(verify=…)`. Si le fichier n'existe pas, le script **échoue** au lieu de retomber silencieusement sur les certificats du système. La vérification TLS n'est jamais désactivée. |
+| `ANTHROPIC_API_KEY` | LLM-as-judge ; inutile en `--hors-ligne` |
+| `JINA_API_KEY` | embeddings ; inutile en `--hors-ligne` |
+
+Les seuils, plafonds et modèles sont surchargeables de la même façon
+(voir `.env.example` et `src/rag_referentiel/config.py`).
+
 ### Sorties
 
 | Fichier | Produit par | Contenu |
 | --- | --- | --- |
 | `reports/monitoring_<horodatage>.json` | `monitor_run.py` | volumes par décision, taux de conformité, latence, cas envoyés en revue |
-| `reports/promotion_<horodatage>.json` | `promote.py` | promus, rejetés, variantes ajoutées, **désaccords juge / métier**, sources illisibles |
+| `reports/promotion_<horodatage>.json` | `promote.py` | promus, rejetés, variantes ajoutées, formulations remplacées et retirées, **désaccords juge / métier**, cibles introuvables, sources illisibles et retirées |
 | `reports/derive_documentaire_<horodatage>.json` | `reverify_docs.py --rapport` | entrées dont une source a changé de version |
 | `reports/referentiel_export.jsonl` | `export_referentiel.py` | une ligne par entrée `ACTIF`, avec toutes ses formulations et ses sources |
 
@@ -454,21 +545,26 @@ automatique**.
 | réponse candidate identique à une formulation existante | écartée comme quasi-doublon, `version` inchangée |
 | deux occurrences du même run appariées à la même question | `calculer_identifiants` suffixe le second `external_id` (`…__run_42_2`) |
 | metadata trop volumineuse | repli documenté, textes conservés dans le rendu |
+| plusieurs pages d'un même document | `doc.pdf:p12, p14` — la page seule prolonge le dernier document nommé |
+| repère de formulation inexistant | signalé au rapport, le lot continue |
+| retrait de la dernière formulation | refusé : une entrée sans réponse ne sert à rien |
+| deux corrections successives sur la même entrée | les deux labels sont consommés, dans l'ordre, grâce au filigrane |
 
 ## Idempotence
 
-`promote.py` peut être relancé sans risque : un cas traité n'est plus
-`EN_ATTENTE`, une variante déjà présente est écartée comme quasi-doublon,
-`version` n'est incrémentée que si l'état change, et la piste d'audit est
-écrite en label `INFERENCE` pour ne pas être relue comme un arbitrage
-humain.
+`promote.py` peut être relancé sans risque : un cas de revue traité n'est
+plus `EN_ATTENTE`, un label du référentiel déjà consommé est en deçà du
+filigrane `derniere_promotion`, une variante déjà présente est écartée
+comme quasi-doublon, `version` n'est incrémentée que si l'état change, et
+la piste d'audit est écrite en label `INFERENCE` pour ne pas être relue
+comme un arbitrage humain.
 
 ---
 
 ## Développement
 
 ```bash
-uv run pytest          # 89 tests, entièrement hors ligne
+uv run pytest          # 110 tests, entièrement hors ligne
 uv run ruff check .
 ```
 

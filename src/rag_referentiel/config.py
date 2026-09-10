@@ -22,6 +22,9 @@ class Parametres(BaseSettings):
     # --- Accès aux services externes -------------------------------------
     kili_api_key: str | None = None
     kili_api_endpoint: str = ENDPOINT_KILI_PAR_DEFAUT
+    # Chemin d'un bundle de certificats, pour une instance derrière un
+    # proxy d'entreprise. Transmis tel quel à `Kili(verify=...)`.
+    kili_ca_bundle: str | None = None
     anthropic_api_key: str | None = None
     jina_api_key: str | None = None
 

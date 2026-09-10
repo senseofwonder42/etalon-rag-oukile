@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **89 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **110 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -46,6 +46,34 @@ Repris en tête du README, section « À vérifier au premier run » :
    de piste d'audit ;
 8. le chemin d'URL d'un projet, reconstruit depuis l'endpoint GraphQL.
 
+## Correction ciblée d'une formulation (option A)
+
+Le job `REPONSE_VALIDEE` seul ne savait qu'**ajouter** : une petite
+correction était écartée comme quasi-doublon et perdue, une réécriture
+laissait la formulation fautive en place, et rien ne permettait d'en
+retirer une. Trois jobs ont été ajoutés au projet A :
+
+- `FORMULATION_CIBLE` (radio `a1`–`a5`) désigne la formulation à
+  remplacer ; vide, le texte est ajouté comme avant ;
+- `FORMULATIONS_A_RETIRER` (cases à cocher) retire une ou plusieurs
+  formulations d'un coup ;
+- les repères `a1`, `a2`, … sont désormais affichés en tête de la ligne
+  de provenance de chaque formulation sur la carte, et **renumérotés** à
+  chaque écriture pour rester dans la plage fixée par le plafond.
+
+Les corrections multiples passent par **plusieurs enregistrements** :
+`promote.py` consomme tous les labels humains créés depuis le filigrane
+`derniere_promotion` de l'entrée, dans l'ordre, puis avance le filigrane.
+Ce filigrane corrige au passage une perte silencieuse : la campagne ne
+lisait que le **dernier** label du projet A, donc un métier annotant deux
+fois voyait sa première annotation ignorée.
+
+L'alternative « cases à cocher + jobs enfants » (une sauvegarde, N
+corrections) n'a **pas** été retenue : les deux briques existent bien dans
+le SDK 2.142.1, mais l'affichage des enfants sous une sélection multiple
+est un comportement **serveur** non vérifiable ici. Elle reste ouverte,
+et son passage ne toucherait pas au modèle de données.
+
 ## Choix et hypothèses
 
 - **Normalisation BM25.** Les scores BM25 ne sont pas bornés ; ils sont
@@ -75,6 +103,28 @@ Repris en tête du README, section « À vérifier au premier run » :
 - **Désaccord juge / métier.** Il n'est connu qu'après arbitrage : il est
   donc compté dans le rapport de `promote.py`, pas dans celui de
   `monitor_run.py`.
+- **Remplacement ciblé et quasi-doublon.** Un remplacement désigné par
+  son repère n'est pas soumis au seuil de quasi-doublon : c'est un
+  arbitrage métier explicite, pas une variante à filtrer. Si le texte
+  corrigé devient très proche d'une autre formulation, les deux sont
+  conservées et un avertissement est journalisé — le métier peut retirer
+  celle qui est en trop.
+- **Retrait plutôt qu'archivage.** Une formulation retirée sort de
+  `answers[]` ; il n'y a pas de statut par formulation, qui obligerait à
+  filtrer partout, y compris avant l'appel au juge. La trace reste dans
+  le label d'audit et dans le rapport. La dernière formulation d'une
+  entrée n'est jamais retirable.
+- **Pages multiples d'un même document.** `doc.pdf:p12, p14` : une page
+  seule prolonge le dernier document nommé. Le préfixe `p` est
+  obligatoire dans ce cas — sans lui, `14` serait indiscernable d'un nom
+  de document. C'est la seule ambiguïté de la syntaxe, et elle est levée
+  par une règle explicite plutôt que par une heuristique.
+- **`KILI_CA_BUNDLE`.** Transmis à `Kili(verify=…)`, qui accepte un
+  chemin comme `requests`. Un chemin invalide fait **échouer** la
+  création du client : retomber sur les certificats du système sans le
+  dire transformerait une erreur de configuration en faille silencieuse.
+  La vérification TLS n'est jamais désactivée — aucun `verify=False`
+  n'est exposé.
 - **Un script en plus.** `export_referentiel.py` a été ajouté pour livrer
   l'export JSONL demandé dans les sorties ; il n'apparaissait pas dans
   l'arborescence indicative.
@@ -93,6 +143,11 @@ Repris en tête du README, section « À vérifier au premier run » :
 - La démonstration ne simule pas d'arbitrage métier : elle s'arrête à la
   création des cas de revue, ce qui est l'objet de la démonstration —
   montrer l'interface.
+- Les repères de formulation étant renumérotés à chaque écriture, une
+  promotion qui tournerait pendant qu'un métier a une carte ouverte
+  pourrait décaler le repère qu'il a sous les yeux. En pratique les deux
+  ne sont pas concurrentes ; c'est noté dans la liste de vérification du
+  README.
 - Les avertissements de dépréciation pydantic visibles pendant les tests
   proviennent de `kili` 2.142.1, qui utilise encore des validateurs de
   style pydantic v1.

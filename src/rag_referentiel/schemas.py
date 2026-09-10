@@ -62,6 +62,10 @@ class EntreeReferentiel(BaseModel):
     answers: list[Answer] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
     derniere_verification: str | None = None
+    # Horodatage du dernier label du projet A déjà consommé par
+    # `promote.py`. Sert de filigrane : tous les labels humains créés
+    # après lui seront appliqués, dans l'ordre, à la prochaine promotion.
+    derniere_promotion: str | None = None
     # Positionné par la couche de stockage quand la metadata a dû être
     # allégée : les textes ne sont alors plus lisibles que dans le rendu.
     repli_texte: bool = False

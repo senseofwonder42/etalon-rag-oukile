@@ -40,6 +40,24 @@ def categorie(reponse: dict, job: str) -> str | None:
     return categories[0].get("name")
 
 
+def categories(reponse: dict, job: str) -> list[str]:
+    """Lit les catégories cochées pour un job à choix multiple.
+
+    Args:
+        reponse: `jsonResponse` du label.
+        job: Nom du job.
+
+    Returns:
+        Les codes des catégories cochées, éventuellement vide.
+    """
+    cochees = (reponse.get(job) or {}).get("categories") or []
+    return [
+        item["name"]
+        for item in cochees
+        if isinstance(item, dict) and item.get("name")
+    ]
+
+
 def transcription(reponse: dict, job: str) -> str | None:
     """Lit le texte saisi pour un job de transcription.
 
@@ -56,6 +74,27 @@ def transcription(reponse: dict, job: str) -> str | None:
     return None
 
 
+def labels_humains(labels: list[dict]) -> list[dict]:
+    """Retient les labels humains d'un asset, du plus ancien au plus récent.
+
+    Les labels de prédiction et d'inférence sont écartés : le type
+    `INFERENCE` est celui de la piste d'audit écrite par les scripts, qui
+    ne doit jamais être relue comme un arbitrage.
+
+    Args:
+        labels: Labels renvoyés par Kili.
+
+    Returns:
+        Les labels humains, triés par date de création croissante.
+    """
+    humains = [
+        label
+        for label in labels
+        if label.get("labelType") in {"DEFAULT", "REVIEW", None}
+    ]
+    return sorted(humains, key=lambda item: item.get("createdAt") or "")
+
+
 def dernier_label(labels: list[dict]) -> dict | None:
     """Retient le label humain le plus récent d'un asset.
 
@@ -68,14 +107,8 @@ def dernier_label(labels: list[dict]) -> dict | None:
     Returns:
         Le label le plus récent, ou `None` si l'asset n'en porte pas.
     """
-    candidats = [
-        label
-        for label in labels
-        if label.get("labelType") in {"DEFAULT", "REVIEW", None}
-    ]
-    if not candidats:
-        return None
-    return max(candidats, key=lambda item: item.get("createdAt") or "")
+    candidats = labels_humains(labels)
+    return candidats[-1] if candidats else None
 
 
 def auteur_de(label: dict) -> str:
