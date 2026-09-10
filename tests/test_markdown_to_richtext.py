@@ -1,128 +1,131 @@
-from rag_referentiel.markdown_to_richtext import markdown_vers_richtext
-from rag_referentiel.richtext import GenerateurIds
+from rag_referentiel.markdown_to_richtext import markdown_to_richtext
+from rag_referentiel.richtext import IdGenerator
 
 
-def convertir(markdown):
-    return markdown_vers_richtext(markdown, GenerateurIds())
+def convert(markdown):
+    return markdown_to_richtext(markdown, IdGenerator())
 
 
-def types(blocs):
-    return [bloc["type"] for bloc in blocs]
+def types(blocks):
+    return [block["type"] for block in blocks]
 
 
-def textes(noeud):
-    if "text" in noeud:
-        return [noeud]
-    resultat = []
-    for enfant in noeud.get("children", []):
-        resultat.extend(textes(enfant))
-    return resultat
+def texts(node):
+    if "text" in node:
+        return [node]
+    result = []
+    for child in node.get("children", []):
+        result.extend(texts(child))
+    return result
 
 
-def test_titres_h1_a_h4():
-    blocs = convertir("# un\n\n## deux\n\n### trois\n\n#### quatre")
-    assert types(blocs) == ["h1", "h2", "h3", "h4"]
+def test_headings_h1_to_h4():
+    blocks = convert("# un\n\n## deux\n\n### trois\n\n#### quatre")
+    assert types(blocks) == ["h1", "h2", "h3", "h4"]
 
 
-def test_titres_au_dela_de_h4_replient_sur_h4():
-    assert types(convertir("##### cinq")) == ["h4"]
+def test_headings_beyond_h4_fall_back_on_h4():
+    assert types(convert("##### cinq")) == ["h4"]
 
 
-def test_paragraphe_et_marques_en_ligne():
-    blocs = convertir("Du **gras**, de l'*italique* et du `code`.")
-    assert types(blocs) == ["p"]
-    marques = {
-        noeud["text"]: {
-            cle for cle in ("bold", "italic", "code") if noeud.get(cle)
+def test_paragraph_and_inline_marks():
+    blocks = convert("Du **gras**, de l'*italique* et du `code`.")
+    assert types(blocks) == ["p"]
+    marks = {
+        node["text"]: {
+            key for key in ("bold", "italic", "code") if node.get(key)
         }
-        for noeud in textes(blocs[0])
+        for node in texts(blocks[0])
     }
-    assert marques["gras"] == {"bold"}
-    assert marques["italique"] == {"italic"}
-    assert marques["code"] == {"code"}
+    assert marks["gras"] == {"bold"}
+    assert marks["italique"] == {"italic"}
+    assert marks["code"] == {"code"}
 
 
-def test_les_marques_ne_deviennent_jamais_des_elements():
-    blocs = convertir("**gras**")
-    assert types(blocs) == ["p"]
-    assert all("type" not in n for n in blocs[0]["children"])
+def test_marks_never_become_elements():
+    blocks = convert("**gras**")
+    assert types(blocks) == ["p"]
+    assert all("type" not in node for node in blocks[0]["children"])
 
 
-def test_liste_a_puces_et_numerotee():
-    blocs = convertir("- un\n- deux\n\n1. a\n2. b")
-    assert types(blocs) == ["ul", "ol"]
-    assert types(blocs[0]["children"]) == ["li", "li"]
+def test_bullet_and_numbered_lists():
+    blocks = convert("- un\n- deux\n\n1. a\n2. b")
+    assert types(blocks) == ["ul", "ol"]
+    assert types(blocks[0]["children"]) == ["li", "li"]
 
 
-def test_citation():
-    blocs = convertir("> une citation")
-    assert types(blocs) == ["blockquote"]
-    assert blocs[0]["borderLeft"]
+def test_blockquote():
+    blocks = convert("> une citation")
+    assert types(blocks) == ["blockquote"]
+    assert blocks[0]["borderLeft"]
 
 
-def test_tableau_rend_th_en_td_gras():
-    blocs = convertir("| A | B |\n| --- | --- |\n| 1 | 2 |")
-    assert types(blocs) == ["table"]
-    entete, corps = blocs[0]["children"]
-    assert entete["type"] == "thead"
-    cellules = entete["children"][0]["children"]
-    assert types(cellules) == ["td", "td"]
-    assert cellules[0]["children"][0]["bold"] is True
-    assert types(corps["children"][0]["children"]) == ["td", "td"]
+def test_table_renders_th_as_bold_td():
+    blocks = convert("| A | B |\n| --- | --- |\n| 1 | 2 |")
+    assert types(blocks) == ["table"]
+    head, body = blocks[0]["children"]
+    assert head["type"] == "thead"
+    cells = head["children"][0]["children"]
+    assert types(cells) == ["td", "td"]
+    assert cells[0]["children"][0]["bold"] is True
+    assert types(body["children"][0]["children"]) == ["td", "td"]
 
 
-def test_bloc_de_code_replie_en_paragraphes_code():
-    blocs = convertir("```\nx = 1\ny = 2\n```")
-    assert types(blocs) == ["p", "p"]
-    assert all(bloc["children"][0]["code"] for bloc in blocs)
+def test_code_block_falls_back_on_code_paragraphs():
+    blocks = convert("```\nx = 1\ny = 2\n```")
+    assert types(blocks) == ["p", "p"]
+    assert all(block["children"][0]["code"] for block in blocks)
 
 
-def test_lien_conserve_le_texte_et_ajoute_url():
-    blocs = convertir("Voir [le guide](https://exemple.fr/guide).")
-    contenu = "".join(n["text"] for n in textes(blocs[0]))
-    assert "le guide" in contenu
-    assert "(https://exemple.fr/guide)" in contenu
+def test_link_keeps_its_text_and_appends_the_url():
+    blocks = convert("Voir [le guide](https://exemple.fr/guide).")
+    content = "".join(node["text"] for node in texts(blocks[0]))
+    assert "le guide" in content
+    assert "(https://exemple.fr/guide)" in content
 
 
-def test_image_replie_sur_son_texte_alternatif():
-    blocs = convertir("![un schéma](img.png)")
-    assert "un schéma" in "".join(n["text"] for n in textes(blocs[0]))
+def test_image_falls_back_on_its_alternative_text():
+    blocks = convert("![un schéma](img.png)")
+    assert "un schéma" in "".join(
+        node["text"] for node in texts(blocks[0])
+    )
 
 
-def test_construction_inconnue_replie_sans_lever():
-    blocs = convertir("<section><span>texte brut</span></section>")
-    assert types(blocs) == ["p"]
-    assert "texte brut" in "".join(n["text"] for n in textes(blocs[0]))
+def test_unknown_construct_falls_back_without_raising():
+    blocks = convert("<section><span>texte brut</span></section>")
+    assert types(blocks) == ["p"]
+    assert "texte brut" in "".join(
+        node["text"] for node in texts(blocks[0])
+    )
 
 
-def test_markdown_vide_donne_un_paragraphe():
-    blocs = convertir("   ")
-    assert types(blocs) == ["p"]
+def test_empty_markdown_yields_a_paragraph():
+    assert types(convert("   ")) == ["p"]
 
 
-def test_markdown_malforme_ne_leve_pas():
-    blocs = convertir("| a | b\n| --- \n**gras non fermé")
-    assert blocs
-    assert all("type" in bloc for bloc in blocs)
+def test_malformed_markdown_does_not_raise():
+    blocks = convert("| a | b\n| --- \n**gras non fermé")
+    assert blocks
+    assert all("type" in block for block in blocks)
 
 
-def test_identifiants_uniques_dans_tout_le_document():
+def test_identifiers_are_unique_across_the_whole_document():
     markdown = (
         "# Titre\n\ntexte **gras**\n\n- un\n- deux\n\n"
         "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n> citation"
     )
-    blocs = convertir(markdown)
-    identifiants = [n["id"] for bloc in blocs for n in textes(bloc)]
-    assert len(identifiants) == len(set(identifiants))
+    blocks = convert(markdown)
+    identifiers = [n["id"] for block in blocks for n in texts(block)]
+    assert len(identifiers) == len(set(identifiers))
 
 
-def test_generateur_partage_garde_les_identifiants_uniques():
-    generateur = GenerateurIds()
-    gauche = markdown_vers_richtext("# a", generateur)
-    droite = markdown_vers_richtext("# b", generateur)
-    ids = [n["id"] for bloc in gauche + droite for n in textes(bloc)]
+def test_a_shared_generator_keeps_identifiers_unique():
+    generator = IdGenerator()
+    left = markdown_to_richtext("# a", generator)
+    right = markdown_to_richtext("# b", generator)
+    ids = [n["id"] for block in left + right for n in texts(block)]
     assert len(ids) == len(set(ids))
 
 
-def test_conversion_deterministe():
-    assert convertir("# Titre\n\ntexte") == convertir("# Titre\n\ntexte")
+def test_conversion_is_deterministic():
+    assert convert("# Titre\n\ntexte") == convert("# Titre\n\ntexte")

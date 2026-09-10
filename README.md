@@ -28,7 +28,7 @@ parcourir dans l'ordre, la première fois.
    `rendering.py`.
 2. **Taille maximale d'un `json_metadata`.** Non documentée par Kili. Le
    projet suppose un seuil prudent de `60 000` octets
-   (`TAILLE_MAX_METADATA`) et bascule au-delà sur une metadata allégée
+   (`MAX_METADATA_SIZE`) et bascule au-delà sur une metadata allégée
    (voir « Repli de taille » plus bas). Mesurer la vraie limite en
    important une entrée volumineuse, puis ajuster le paramètre.
 3. **`update_properties_in_assets(json_contents=…)`.** À l'import,
@@ -42,7 +42,7 @@ parcourir dans l'ordre, la première fois.
    `reverify_docs.py --declencher`. Vérifier que l'asset revient bien dans
    la file `TODO` de l'annotateur **sans perdre ses labels**.
 5. **Disponibilité du modèle d'embeddings.** La valeur par défaut est
-   `jina-embeddings-v5-nano`. `JinaEmbeddings.verifier_modele()` interroge
+   `jina-embeddings-v5-nano`. `JinaEmbeddings.check_model_available()` interroge
    `GET {URL_JINA}/models` et échoue avec un message clair si le modèle
    n'y figure pas. Le point d'entrée `/models` et l'identifiant du modèle
    n'ont pas été vérifiés contre le service réel.
@@ -205,7 +205,7 @@ Les schémas pydantic de `schemas.py` sont sérialisés dans le
 ### Repli de taille du `json_metadata`
 
 Toute écriture passe par `storage.py`. Si la metadata sérialisée dépasse
-`TAILLE_MAX_METADATA`, ou si le serveur refuse l'écriture pour cause de
+`MAX_METADATA_SIZE`, ou si le serveur refuse l'écriture pour cause de
 volume, on bascule sur une metadata allégée :
 
 - les textes longs sont retirés (`candidate_answer`, `answers[].text`) ;
@@ -246,7 +246,7 @@ de sa ligne de provenance sur la carte. C'est lui qu'on désigne :
 | `REPONSE_VALIDEE` seule | la formulation est **ajoutée**, sauf quasi-doublon |
 | `FORMULATION_CIBLE = a2` + `REPONSE_VALIDEE` | `a2` est **remplacée** ; son origine repasse à `metier`, son `run_id` est effacé |
 | `FORMULATION_CIBLE` sans texte | incohérent : ignoré et journalisé |
-| repère inexistant (`a5` sur une entrée à trois formulations) | signalé dans `cibles_introuvables` du rapport, le lot continue |
+| repère inexistant (`a5` sur une entrée à trois formulations) | signalé dans `unknown_markers` du rapport, le lot continue |
 | `FORMULATIONS_A_RETIRER = a1, a3` | les deux formulations sont retirées ; la **dernière** formulation d'une entrée n'est jamais retirable |
 
 Un remplacement ciblé **n'est pas soumis à la règle du quasi-doublon** :
@@ -313,11 +313,11 @@ facultatif juste après un document (`doc.pdf:12`) mais **obligatoire**
 sur une page seule, faute de quoi un fragment numérique serait
 indiscernable d'un nom de document. Une page seule sans document qui la
 précède, ou tout autre fragment illisible, est signalée dans
-`sources_illisibles` du rapport sans faire échouer le lot.
+`unreadable_sources` du rapport sans faire échouer le lot.
 
 La saisie **remplace la liste entière** : c'est ce qui permet de corriger
 plusieurs sources d'un coup, mais taper une seule ligne supprime les
-autres. Les suppressions sont listées dans `sources_retirees` du rapport
+autres. Les suppressions sont listées dans `removed_sources` du rapport
 de promotion.
 
 ---
@@ -335,9 +335,9 @@ implémentations.
 - **`LexicalMatcher`** : BM25 seul, hors ligne, utilisé par la démo et les
   tests.
 
-Deux seuils : au-dessus de `SEUIL_APPARIEMENT_HAUT` (0.72) → `MATCH` ;
+Deux seuils : au-dessus de `MATCH_THRESHOLD_HIGH` (0.72) → `MATCH` ;
 entre les deux → `INCERTAIN`, le cas part en revue avec le job
-`MEME_QUESTION` ; en dessous de `SEUIL_APPARIEMENT_BAS` (0.45) →
+`MEME_QUESTION` ; en dessous de `MATCH_THRESHOLD_LOW` (0.45) →
 `NOUVELLE`.
 
 Le backend d'embeddings est derrière le protocole `EmbeddingBackend` :
@@ -349,10 +349,10 @@ chaque exécution : **pas de base vectorielle**.
 ## Accumulation des formulations
 
 - Une variante n'est ajoutée que si elle est **suffisamment distante** des
-  formulations déjà présentes : `similarite_lexicale` (indice de Jaccard
+  formulations déjà présentes : `lexical_similarity` (indice de Jaccard
   sur les jetons normalisés, la mesure du module d'appariement) doit
-  rester sous `SEUIL_QUASI_DOUBLON` (0.85).
-- **Plafond de 5 variantes** (`PLAFOND_VARIANTES`). Au-delà, on conserve
+  rester sous `NEAR_DUPLICATE_THRESHOLD` (0.85).
+- **Plafond de 5 variantes** (`VARIANT_CAP`). Au-delà, on conserve
   les plus diverses entre elles, et **toujours** la formulation d'origine
   métier.
 - Chaque variante retenue est aussi écrite comme label `REPONSE_VALIDEE`
@@ -362,17 +362,17 @@ chaque exécution : **pas de base vectorielle**.
 ## LLM-as-judge
 
 Le protocole `AnswerJudge` reçoit la question, la réponse candidate et la
-**liste des formulations validées** (plafonnée à `MAX_REFERENCES_JUGE`).
+**liste des formulations validées** (plafonnée à `MAX_JUDGE_REFERENCES`).
 Le prompt exploite explicitement cette pluralité : *la réponse est-elle
 équivalente à au moins une des formulations validées, sans en contredire
 aucune ?*
 
-- `JugeClaude` : SDK `anthropic`, modèle `claude-sonnet-5` par défaut.
-- `JugeLexical` : recouvrement lexical normalisé au-dessus d'un seuil,
+- `ClaudeJudge` : SDK `anthropic`, modèle `claude-sonnet-5` par défaut.
+- `LexicalJudge` : recouvrement lexical normalisé au-dessus d'un seuil,
   déterministe et hors ligne, pour la démo et les tests.
 
 Le désaccord juge / métier n'est connu qu'**après** arbitrage : il est
-donc compté par `promote.py` (`desaccords_juge_metier`), pas par
+donc compté par `promote.py` (`judge_business_disagreements`), pas par
 `monitor_run.py`.
 
 ---
@@ -409,7 +409,7 @@ Replis explicites, jamais d'exception :
 | markdown vide ou illisible | un `p` contenant le texte brut |
 
 Les `id` de nœud texte sont générés par un compteur déterministe
-(`GenerateurIds`), **uniques dans tout le document** : deux rendus des
+(`IdGenerator`), **uniques dans tout le document** : deux rendus des
 mêmes données produisent exactement le même arbre.
 
 ---
@@ -512,7 +512,7 @@ Les seuils, plafonds et modèles sont surchargeables de la même façon
 | Fichier | Produit par | Contenu |
 | --- | --- | --- |
 | `reports/monitoring_<horodatage>.json` | `monitor_run.py` | volumes par décision, taux de conformité, latence, cas envoyés en revue |
-| `reports/promotion_<horodatage>.json` | `promote.py` | promus, rejetés, variantes ajoutées, formulations remplacées et retirées, **désaccords juge / métier**, cibles introuvables, sources illisibles et retirées |
+| `reports/promotion_<horodatage>.json` | `promote.py` | `promoted`, `rejected`, `variants_added`, `answers_replaced`, `answers_removed`, **`judge_business_disagreements`**, `unknown_markers`, `unreadable_sources`, `removed_sources` |
 | `reports/derive_documentaire_<horodatage>.json` | `reverify_docs.py --rapport` | entrées dont une source a changé de version |
 | `reports/referentiel_export.jsonl` | `export_referentiel.py` | une ligne par entrée `ACTIF`, avec toutes ses formulations et ses sources |
 
@@ -543,7 +543,7 @@ automatique**.
 | source sans page | `page = null` ; rendue « — » dans le tableau, retenue par la revérification |
 | référentiel vide au premier run | toute question est `NOUVELLE`, score `0.0` |
 | réponse candidate identique à une formulation existante | écartée comme quasi-doublon, `version` inchangée |
-| deux occurrences du même run appariées à la même question | `calculer_identifiants` suffixe le second `external_id` (`…__run_42_2`) |
+| deux occurrences du même run appariées à la même question | `compute_external_ids` suffixe le second `external_id` (`…__run_42_2`) |
 | metadata trop volumineuse | repli documenté, textes conservés dans le rendu |
 | plusieurs pages d'un même document | `doc.pdf:p12, p14` — la page seule prolonge le dernier document nommé |
 | repère de formulation inexistant | signalé au rapport, le lot continue |
@@ -564,13 +564,25 @@ comme un arbitrage humain.
 ## Développement
 
 ```bash
-uv run pytest          # 110 tests, entièrement hors ligne
+uv run pytest          # 111 tests, entièrement hors ligne
 uv run ruff check .
 ```
 
+**Convention de langue.** Les identifiants Python et les docstrings sont
+en **anglais** ; les noms de modules sont conservés tels quels, parce
+qu'ils désignent les deux projets Kili. Tout ce qui est lu par une
+personne reste en **français** : ce README, les commentaires, les
+messages de log et d'erreur, les libellés et instructions des jobs Kili,
+et les options de ligne de commande (`--projet-referentiel`,
+`--hors-ligne`, …), reliées à un attribut anglais par le `dest`
+d'argparse. Les noms de champs pydantic (`statut`, `origine`, `auteur`,
+`derniere_verification`, …) ne sont pas renommés : ils forment le contrat
+JSON du `json_metadata`, fixé par le cahier des charges et relu à chaque
+exécution.
+
 Les tests s'appuient sur un **faux client Kili en mémoire**
 (`tests/conftest.py`) : aucun appel réseau, y compris pour les
-embeddings (`FakeEmbeddings`) et le juge (`JugeLexical`).
+embeddings (`FakeEmbeddings`) et le juge (`LexicalJudge`).
 
 ### Arborescence
 

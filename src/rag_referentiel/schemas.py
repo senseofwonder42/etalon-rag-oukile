@@ -1,23 +1,28 @@
-"""Modèles pydantic sérialisés dans les `json_metadata` des assets Kili."""
+"""Pydantic models serialized into the `json_metadata` of Kili assets.
+
+Field names follow the metadata contract given in the specification and
+are therefore left untouched: they are a wire format, read back by every
+run and by the JSONL exports.
+"""
 
 from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Statut = Literal["ACTIF", "A_REVERIFIER", "ARCHIVE"]
-Origine = Literal["metier", "rag_valide", "rag_corrige"]
-Motif = Literal[
+Status = Literal["ACTIF", "A_REVERIFIER", "ARCHIVE"]
+Origin = Literal["metier", "rag_valide", "rag_corrige"]
+Reason = Literal[
     "NOUVELLE_QUESTION",
     "DIVERGENCE",
     "APPARIEMENT_INCERTAIN",
     "REVERIFICATION_DOC",
 ]
-StatutRevue = Literal["EN_ATTENTE", "PROMU", "REJETE"]
+ReviewStatus = Literal["EN_ATTENTE", "PROMU", "REJETE"]
 
 
 class Source(BaseModel):
-    """Référence documentaire citée par une réponse."""
+    """Documentary reference cited by an answer."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -25,12 +30,11 @@ class Source(BaseModel):
     page: int | None = None
     doc_version: str | None = None
 
-    def libelle(self) -> str:
-        """Rend la source au format `doc.pdf:12`.
+    def label(self) -> str:
+        """Render the source as `doc.pdf:12`.
 
         Returns:
-            La source sous forme textuelle ; sans `:page` si la page est
-            inconnue.
+            The source as text; without `:page` when the page is unknown.
         """
         if self.page is None:
             return self.doc_id
@@ -38,26 +42,26 @@ class Source(BaseModel):
 
 
 class Answer(BaseModel):
-    """Formulation validée d'une réponse du référentiel."""
+    """Validated wording of a reference answer."""
 
     model_config = ConfigDict(extra="ignore")
 
     id: str
     text: str
-    origine: Origine
+    origine: Origin
     auteur: str
     date: str
     run_id: str | None = None
 
 
-class EntreeReferentiel(BaseModel):
-    """Entrée du projet A : une question et ses réponses validées."""
+class ReferenceEntry(BaseModel):
+    """Project A entry: one question and its validated answers."""
 
     model_config = ConfigDict(extra="ignore")
 
     question_id: str
     question: str
-    statut: Statut = "ACTIF"
+    statut: Status = "ACTIF"
     version: int = 1
     answers: list[Answer] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
@@ -72,7 +76,7 @@ class EntreeReferentiel(BaseModel):
 
 
 class Verdict(BaseModel):
-    """Avis du LLM-as-judge sur une réponse candidate."""
+    """LLM-as-judge opinion on a candidate answer."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -81,26 +85,26 @@ class Verdict(BaseModel):
     motif: str
 
 
-class CasRevue(BaseModel):
-    """Asset du projet B : une occurrence de production à arbitrer."""
+class ReviewCase(BaseModel):
+    """Project B asset: one production occurrence to arbitrate."""
 
     model_config = ConfigDict(extra="ignore")
 
     question_id: str
     run_id: str
-    motif: Motif
+    motif: Reason
     question: str
     candidate_answer: str
     sources: list[Source] = Field(default_factory=list)
     verdict_juge: Verdict | None = None
     score_appariement: float | None = None
     question_id_candidat: str | None = None
-    statut_revue: StatutRevue = "EN_ATTENTE"
+    statut_revue: ReviewStatus = "EN_ATTENTE"
     repli_texte: bool = False
 
 
-class OccurrenceProd(BaseModel):
-    """Ligne du JSONL de production consommé par `monitor_run.py`."""
+class ProductionOccurrence(BaseModel):
+    """One line of the production JSONL consumed by `monitor_run.py`."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -111,8 +115,8 @@ class OccurrenceProd(BaseModel):
     sources: list[Source] = Field(default_factory=list)
 
 
-class EntreeInitiale(BaseModel):
-    """Ligne du JSONL d'amorçage consommé par `bootstrap.py`."""
+class SeedEntry(BaseModel):
+    """One line of the seed JSONL consumed by `bootstrap.py`."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -121,10 +125,10 @@ class EntreeInitiale(BaseModel):
     sources: list[Source] = Field(default_factory=list)
 
 
-def aujourdhui() -> str:
-    """Renvoie la date du jour au format ISO.
+def today() -> str:
+    """Return the current date in ISO format.
 
     Returns:
-        La date courante, par exemple `2026-07-18`.
+        The current date, for instance `2026-07-18`.
     """
     return date.today().isoformat()

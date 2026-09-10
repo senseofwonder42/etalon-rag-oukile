@@ -1,8 +1,8 @@
-"""Projet A — Référentiel RAG : lecture, écriture et enrichissement.
+"""Project A — Référentiel RAG: reading, writing and enrichment.
 
-Un asset = une question. C'est l'état de vérité : on n'y annote qu'à la
-création d'une entrée et lors des campagnes de revérification. Toutes les
-écritures issues de la production passent par `promouvoir_lot`.
+One asset is one question. This is the source of truth: it is annotated
+only when an entry is created and during recheck campaigns. Every write
+coming from production goes through `promote_batch`.
 """
 
 import json
@@ -11,32 +11,36 @@ import re
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from .config import Parametres
-from .interfaces import INTERFACE_REFERENTIEL
+from .config import Settings
+from .interfaces import REFERENCE_INTERFACE
 from .labels import (
-    auteur_de,
-    categorie,
+    author_of,
     categories,
-    charger_metadata,
-    labels_humains,
+    category,
+    human_labels,
+    load_metadata,
     transcription,
 )
-from .matching import similarite_lexicale
-from .normalisation import calculer_question_id
-from .rendering import rendu_asset_referentiel
-from .revue import CasArbitre, lire_cas_arbitres, marquer_statut
+from .matching import lexical_similarity
+from .normalisation import compute_question_id
+from .rendering import render_reference_asset
+from .revue import (
+    ArbitratedCase,
+    read_arbitrated_cases,
+    set_review_status,
+)
 from .schemas import (
     Answer,
-    CasRevue,
-    EntreeReferentiel,
-    Origine,
+    Origin,
+    ReferenceEntry,
+    ReviewCase,
     Source,
-    Statut,
-    aujourdhui,
+    Status,
+    today,
 )
-from .storage import ChargeAsset, ecrire_avec_repli, preparer_charge
+from .storage import AssetPayload, prepare_payload, write_with_fallback
 
-CHAMPS_ENTREE = [
+ENTRY_FIELDS = [
     "externalId",
     "id",
     "jsonMetadata",
@@ -47,571 +51,564 @@ CHAMPS_ENTREE = [
     "labels.labelType",
 ]
 
-_MOTIF_SOURCE = re.compile(r"^(?P<doc>[^:]+?)(?::p?(?P<page>\d+))?$", re.I)
-_MOTIF_PAGE_SEULE = re.compile(r"^p\.?\s*(?P<page>\d+)$", re.I)
-_SEPARATEURS_SOURCES = re.compile(r"[,\n;]")
+_SOURCE_PATTERN = re.compile(
+    r"^(?P<doc>[^:]+?)(?::p?(?P<page>\d+))?$", re.I
+)
+_PAGE_ONLY_PATTERN = re.compile(r"^p\.?\s*(?P<page>\d+)$", re.I)
+_SOURCE_SEPARATORS = re.compile(r"[,\n;]")
 
 
-class CibleIntrouvableError(ValueError):
-    """Le repère de formulation désigné n'existe pas sur l'entrée."""
+class UnknownAnswerMarkerError(ValueError):
+    """The designated answer marker does not exist on the entry."""
 
 
-class RapportPromotion(BaseModel):
-    """Compte rendu d'une exécution de la promotion."""
+class PromotionReport(BaseModel):
+    """Summary of one promotion run."""
 
-    cas_lus: int = 0
-    promus: int = 0
-    rejetes: int = 0
-    ignores: int = 0
-    nouvelles_entrees: int = 0
-    variantes_ajoutees: int = 0
-    entrees_mises_a_jour: int = 0
-    entrees_revalidees: int = 0
-    entrees_archivees: int = 0
-    desaccords_juge_metier: int = 0
-    labels_referentiel_consommes: int = 0
-    formulations_remplacees: int = 0
-    formulations_retirees: int = 0
-    cibles_introuvables: list[str] = Field(default_factory=list)
-    sources_illisibles: list[str] = Field(default_factory=list)
-    sources_retirees: list[str] = Field(default_factory=list)
+    cases_read: int = 0
+    promoted: int = 0
+    rejected: int = 0
+    skipped: int = 0
+    new_entries: int = 0
+    variants_added: int = 0
+    entries_updated: int = 0
+    entries_revalidated: int = 0
+    entries_archived: int = 0
+    judge_business_disagreements: int = 0
+    reference_labels_consumed: int = 0
+    answers_replaced: int = 0
+    answers_removed: int = 0
+    unknown_markers: list[str] = Field(default_factory=list)
+    unreadable_sources: list[str] = Field(default_factory=list)
+    removed_sources: list[str] = Field(default_factory=list)
     details: list[dict] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------- #
 # Projet Kili
 # --------------------------------------------------------------------- #
-def creer_projet(kili: object, titre: str) -> str:
-    """Crée le projet Kili du référentiel.
+def create_project(kili: object, title: str) -> str:
+    """Create the Kili reference project.
 
     Args:
-        kili: Client Kili.
-        titre: Titre du projet.
+        kili: Kili client.
+        title: Project title.
 
     Returns:
-        L'identifiant du projet créé.
+        The identifier of the created project.
     """
-    projet = kili.create_project(
-        title=titre,
+    project = kili.create_project(
+        title=title,
         input_type="TEXT",
-        json_interface=INTERFACE_REFERENTIEL,
+        json_interface=REFERENCE_INTERFACE,
         description=(
             "Référentiel des questions et de leurs réponses validées."
         ),
     )
-    logger.info("Projet de référentiel créé : {}", projet["id"])
-    return projet["id"]
+    logger.info("Projet de référentiel créé : {}", project["id"])
+    return project["id"]
 
 
-def importer_entrees(
+def import_entries(
     kili: object,
     project_id: str,
-    entrees: list[EntreeReferentiel],
-    taille_max_metadata: int,
+    entries: list[ReferenceEntry],
+    max_metadata_size: int,
 ) -> list[str]:
-    """Importe des entrées neuves dans le référentiel.
+    """Import brand new entries into the repository.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet A.
-        entrees: Entrées à créer.
-        taille_max_metadata: Seuil de repli de la metadata, en octets.
+        kili: Kili client.
+        project_id: Identifier of project A.
+        entries: Entries to create.
+        max_metadata_size: Metadata fallback threshold, in bytes.
 
     Returns:
-        Les `external_id` des assets créés.
+        The `external_id` values of the created assets.
     """
-    if not entrees:
+    if not entries:
         return []
-    charges = [
-        preparer_charge(
-            entree.model_dump(),
-            rendu_asset_referentiel(entree),
-            taille_max_metadata,
+    payloads = [
+        prepare_payload(
+            entry.model_dump(),
+            render_reference_asset(entry),
+            max_metadata_size,
         )
-        for entree in entrees
+        for entry in entries
     ]
-    external_ids = [entree.question_id for entree in entrees]
+    external_ids = [entry.question_id for entry in entries]
     kili.append_many_to_dataset(
         project_id=project_id,
         external_id_array=external_ids,
-        json_content_array=[charge.json_content for charge in charges],
-        json_metadata_array=[charge.json_metadata for charge in charges],
+        json_content_array=[p.json_content for p in payloads],
+        json_metadata_array=[p.json_metadata for p in payloads],
     )
     logger.info("{} entrées importées au référentiel.", len(external_ids))
     return external_ids
 
 
-def charger_entrees(
+def load_entries(
     kili: object,
     project_id: str,
-    statuts: tuple[Statut, ...] | None = None,
-) -> list[EntreeReferentiel]:
-    """Charge les entrées du référentiel.
+    statuses: tuple[Status, ...] | None = None,
+) -> list[ReferenceEntry]:
+    """Load the entries of the repository.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet A.
-        statuts: Statuts à conserver ; tous si `None`.
+        kili: Kili client.
+        project_id: Identifier of project A.
+        statuses: Statuses to keep; all of them when `None`.
 
     Returns:
-        Les entrées lisibles du référentiel.
+        The readable entries of the repository.
     """
-    entrees: list[EntreeReferentiel] = []
-    for asset in kili.assets(project_id=project_id, fields=CHAMPS_ENTREE):
-        metadata = charger_metadata(asset.get("jsonMetadata"))
+    entries: list[ReferenceEntry] = []
+    for asset in kili.assets(project_id=project_id, fields=ENTRY_FIELDS):
+        metadata = load_metadata(asset.get("jsonMetadata"))
         if not metadata.get("question_id"):
             continue
         try:
-            entree = EntreeReferentiel.model_validate(metadata)
-        except ValueError as erreur:
+            entry = ReferenceEntry.model_validate(metadata)
+        except ValueError as error:
             logger.warning(
-                "Entrée illisible ({}) : {}", asset.get("externalId"), erreur
+                "Entrée illisible ({}) : {}", asset.get("externalId"), error
             )
             continue
-        if statuts is None or entree.statut in statuts:
-            entrees.append(entree)
-    return entrees
+        if statuses is None or entry.statut in statuses:
+            entries.append(entry)
+    return entries
 
 
-def ecrire_entree(
+def write_entry(
     kili: object,
     project_id: str,
-    entree: EntreeReferentiel,
-    taille_max_metadata: int,
+    entry: ReferenceEntry,
+    max_metadata_size: int,
 ) -> None:
-    """Rafraîchit la metadata et le rendu d'une entrée existante.
+    """Refresh both the metadata and the rendering of an existing entry.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet A.
-        entree: Entrée à écrire, version déjà incrémentée.
-        taille_max_metadata: Seuil de repli de la metadata, en octets.
+        kili: Kili client.
+        project_id: Identifier of project A.
+        entry: Entry to write, with its version already bumped.
+        max_metadata_size: Metadata fallback threshold, in bytes.
     """
 
-    def ecriture(charge: ChargeAsset) -> None:
+    def write(payload: AssetPayload) -> None:
         kili.update_properties_in_assets(
             project_id=project_id,
-            external_ids=[entree.question_id],
-            json_metadatas=[charge.json_metadata],
+            external_ids=[entry.question_id],
+            json_metadatas=[payload.json_metadata],
             json_contents=[
-                json.dumps(charge.json_content, ensure_ascii=False)
+                json.dumps(payload.json_content, ensure_ascii=False)
             ],
         )
 
-    ecrire_avec_repli(
-        ecriture,
-        entree.model_dump(),
-        rendu_asset_referentiel(entree),
-        taille_max_metadata,
+    write_with_fallback(
+        write,
+        entry.model_dump(),
+        render_reference_asset(entry),
+        max_metadata_size,
     )
 
 
-def journaliser_variante(
-    kili: object, project_id: str, question_id: str, texte: str
+def append_audit_label(
+    kili: object, project_id: str, question_id: str, text: str
 ) -> None:
-    """Écrit la piste d'audit d'une variante dans le projet A.
+    """Write the audit trail of a wording into project A.
 
-    La metadata porte l'état agrégé ; ce label porte l'ajout, horodaté par
-    Kili. L'auteur du label est la clé d'API qui écrit ; le métier qui a
-    réellement arbitré est conservé dans `answers[].auteur`.
+    The metadata carries the aggregated state; this label carries the
+    addition, timestamped by Kili. The label author is the API key doing
+    the write; the business user who actually arbitrated is kept in
+    `answers[].auteur`.
 
-    Le label est de type `INFERENCE` : il est écrit par un automate, et il
-    ne doit pas être relu comme un arbitrage humain par la campagne de
-    revérification — sans quoi chaque exécution de `promote.py` rejouerait
-    les variantes déjà versées.
+    The label type is `INFERENCE`: it is written by an automation and
+    must not be read back as a human arbitration — otherwise every run of
+    `promote.py` would replay the wordings already recorded.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet A.
-        question_id: Entrée concernée.
-        texte: Formulation ajoutée.
+        kili: Kili client.
+        project_id: Identifier of project A.
+        question_id: Entry concerned.
+        text: Wording that was added.
     """
     kili.append_labels(
         project_id=project_id,
         asset_external_id_array=[question_id],
-        json_response_array=[{"REPONSE_VALIDEE": {"text": texte}}],
+        json_response_array=[{"REPONSE_VALIDEE": {"text": text}}],
         label_type="INFERENCE",
     )
 
 
 # --------------------------------------------------------------------- #
-# Règles pures : variantes et sources
+# Règles pures : formulations et sources
 # --------------------------------------------------------------------- #
-def renumeroter(entree: EntreeReferentiel) -> None:
-    """Renumérote les formulations en `a1`, `a2`, … dans l'ordre courant.
+def renumber_answers(entry: ReferenceEntry) -> None:
+    """Renumber the wordings as `a1`, `a2`, … in their current order.
 
-    Les repères servent de catégories au job `FORMULATION_CIBLE` du
-    projet A : ils doivent rester dans la plage `a1`–`a5` fixée par le
-    plafond de variantes, sans trou après un retrait.
+    Markers are the categories of the `FORMULATION_CIBLE` job of project
+    A: they must stay within the `a1`–`a5` range set by the variant cap,
+    with no hole after a removal.
 
     Args:
-        entree: Entrée à renuméroter, modifiée sur place.
+        entry: Entry to renumber, modified in place.
     """
-    for numero, reponse in enumerate(entree.answers, start=1):
-        reponse.id = f"a{numero}"
+    for number, answer in enumerate(entry.answers, start=1):
+        answer.id = f"a{number}"
 
 
-def selectionner_variantes(
-    reponses: list[Answer], plafond: int
-) -> list[Answer]:
-    """Retient les formulations les plus diverses entre elles.
+def select_variants(answers: list[Answer], cap: int) -> list[Answer]:
+    """Keep the wordings that are the most diverse from one another.
 
-    La première formulation d'origine métier est toujours conservée : elle
-    fait foi. Les suivantes sont choisies gloutonnement en maximisant la
-    distance minimale aux formulations déjà retenues.
+    The first wording of business origin is always kept: it prevails. The
+    next ones are picked greedily, maximizing the minimum distance to the
+    already selected wordings.
 
     Args:
-        reponses: Formulations candidates.
-        plafond: Nombre maximal de formulations à conserver.
+        answers: Candidate wordings.
+        cap: Maximum number of wordings to keep.
 
     Returns:
-        Les formulations retenues, dans l'ordre d'origine.
+        The selected wordings, in their original order.
     """
-    if len(reponses) <= plafond:
-        return list(reponses)
+    if len(answers) <= cap:
+        return list(answers)
 
-    metier = next(
-        (r for r in reponses if r.origine == "metier"), reponses[0]
+    business = next(
+        (a for a in answers if a.origine == "metier"), answers[0]
     )
-    retenues = [metier]
-    restantes = [r for r in reponses if r.id != metier.id]
-    while len(retenues) < plafond and restantes:
-        suivante = max(
-            restantes,
+    kept = [business]
+    remaining = [a for a in answers if a.id != business.id]
+    while len(kept) < cap and remaining:
+        following = max(
+            remaining,
             key=lambda candidate: min(
-                1.0 - similarite_lexicale(candidate.text, retenue.text)
-                for retenue in retenues
+                1.0 - lexical_similarity(candidate.text, selected.text)
+                for selected in kept
             ),
         )
-        retenues.append(suivante)
-        restantes = [r for r in restantes if r.id != suivante.id]
-    identifiants = {r.id for r in retenues}
-    return [r for r in reponses if r.id in identifiants]
+        kept.append(following)
+        remaining = [a for a in remaining if a.id != following.id]
+    identifiers = {a.id for a in kept}
+    return [a for a in answers if a.id in identifiers]
 
 
-def ajouter_variante(
-    entree: EntreeReferentiel,
-    texte: str,
-    origine: Origine,
-    auteur: str,
+def add_variant(
+    entry: ReferenceEntry,
+    text: str,
+    origin: Origin,
+    author: str,
     date: str,
     run_id: str | None,
-    seuil_quasi_doublon: float,
-    plafond: int,
+    near_duplicate_threshold: float,
+    cap: int,
 ) -> bool:
-    """Ajoute une formulation à une entrée, si elle apporte quelque chose.
+    """Add a wording to an entry, when it brings something.
 
-    Une variante trop proche d'une formulation existante est écartée. Au
-    delà du plafond, on ne conserve que les formulations les plus diverses.
+    A variant too close to an existing wording is discarded. Beyond the
+    cap, only the most diverse wordings are kept.
 
     Args:
-        entree: Entrée à enrichir, modifiée sur place.
-        texte: Formulation à ajouter.
-        origine: Provenance de la formulation.
-        auteur: Métier qui a arbitré la formulation.
-        date: Date de l'arbitrage, au format ISO.
-        run_id: Occurrence de production d'origine, le cas échéant.
-        seuil_quasi_doublon: Similarité au-dessus de laquelle la variante
-            est considérée comme un doublon.
-        plafond: Nombre maximal de formulations conservées.
+        entry: Entry to enrich, modified in place.
+        text: Wording to add.
+        origin: Provenance of the wording.
+        author: Business user who arbitrated the wording.
+        date: Arbitration date, in ISO format.
+        run_id: Originating production occurrence, when there is one.
+        near_duplicate_threshold: Similarity above which the variant is
+            considered a duplicate.
+        cap: Maximum number of wordings kept.
 
     Returns:
-        `True` si la liste des formulations a changé.
+        `True` when the list of wordings changed.
     """
-    texte = (texte or "").strip()
-    if not texte:
+    text = (text or "").strip()
+    if not text:
         return False
-    if entree.repli_texte:
+    if entry.repli_texte:
         logger.error(
             "Entrée {} repliée (textes absents de la metadata) : ajout de "
             "variante refusé pour ne pas dédoublonner à l'aveugle.",
-            entree.question_id,
+            entry.question_id,
         )
         return False
-    for reponse in entree.answers:
-        if similarite_lexicale(reponse.text, texte) >= seuil_quasi_doublon:
+    for answer in entry.answers:
+        if lexical_similarity(answer.text, text) >= near_duplicate_threshold:
             logger.info(
                 "Variante écartée (quasi-doublon de {}) sur {}.",
-                reponse.id,
-                entree.question_id,
+                answer.id,
+                entry.question_id,
             )
             return False
 
-    avant = [reponse.text for reponse in entree.answers]
-    entree.answers.append(
+    before = [answer.text for answer in entry.answers]
+    entry.answers.append(
         Answer(
-            id=f"a{len(entree.answers) + 1}",
-            text=texte,
-            origine=origine,
-            auteur=auteur,
+            id=f"a{len(entry.answers) + 1}",
+            text=text,
+            origine=origin,
+            auteur=author,
             date=date,
             run_id=run_id,
         )
     )
-    entree.answers = selectionner_variantes(entree.answers, plafond)
-    renumeroter(entree)
-    return [reponse.text for reponse in entree.answers] != avant
+    entry.answers = select_variants(entry.answers, cap)
+    renumber_answers(entry)
+    return [answer.text for answer in entry.answers] != before
 
 
-def remplacer_formulation(
-    entree: EntreeReferentiel,
-    cible: str,
-    texte: str,
-    auteur: str,
+def replace_answer(
+    entry: ReferenceEntry,
+    marker: str,
+    text: str,
+    author: str,
     date: str,
-    seuil_quasi_doublon: float,
+    near_duplicate_threshold: float,
 ) -> bool:
-    """Remplace le texte d'une formulation désignée par son repère.
+    """Replace the text of the wording designated by its marker.
 
-    Le repère et la place de la formulation sont conservés ; l'origine
-    repasse à `metier` et le `run_id` est effacé, la formulation n'étant
-    plus celle produite par la RAG.
+    The marker and the position of the wording are preserved; the origin
+    goes back to `metier` and the `run_id` is cleared, the wording no
+    longer being the one produced by the RAG.
 
     Args:
-        entree: Entrée à corriger, modifiée sur place.
-        cible: Repère de la formulation, `a1` à `a5`.
-        texte: Texte corrigé.
-        auteur: Métier qui a corrigé.
-        date: Date de la correction, au format ISO.
-        seuil_quasi_doublon: Similarité au-dessus de laquelle la
-            correction est signalée comme redondante avec une autre
-            formulation. Elle est appliquée quand même : c'est un
-            arbitrage métier explicite.
+        entry: Entry to fix, modified in place.
+        marker: Marker of the wording, `a1` to `a5`.
+        text: Corrected text.
+        author: Business user who corrected it.
+        date: Correction date, in ISO format.
+        near_duplicate_threshold: Similarity above which the correction
+            is reported as redundant with another wording. It is applied
+            all the same: this is an explicit business arbitration.
 
     Returns:
-        `True` si le texte a changé.
+        `True` when the text changed.
 
     Raises:
-        CibleIntrouvableError: Si aucune formulation ne porte ce repère.
+        UnknownAnswerMarkerError: If no wording carries that marker.
     """
-    texte = (texte or "").strip()
-    if not texte:
+    text = (text or "").strip()
+    if not text:
         return False
-    if entree.repli_texte:
+    if entry.repli_texte:
         logger.error(
             "Entrée {} repliée : remplacement refusé, les textes ne sont "
             "pas lisibles en metadata.",
-            entree.question_id,
+            entry.question_id,
         )
         return False
 
-    trouvee = next((r for r in entree.answers if r.id == cible), None)
-    if trouvee is None:
-        raise CibleIntrouvableError(
-            f"L'entrée {entree.question_id} n'a pas de formulation "
-            f"« {cible} » (repères existants : "
-            f"{', '.join(r.id for r in entree.answers) or 'aucun'})."
+    found = next((a for a in entry.answers if a.id == marker), None)
+    if found is None:
+        raise UnknownAnswerMarkerError(
+            f"L'entrée {entry.question_id} n'a pas de formulation "
+            f"« {marker} » (repères existants : "
+            f"{', '.join(a.id for a in entry.answers) or 'aucun'})."
         )
-    if trouvee.text.strip() == texte:
+    if found.text.strip() == text:
         return False
 
-    for autre in entree.answers:
-        if autre.id == cible:
+    for other in entry.answers:
+        if other.id == marker:
             continue
-        if similarite_lexicale(autre.text, texte) >= seuil_quasi_doublon:
+        if lexical_similarity(other.text, text) >= near_duplicate_threshold:
             logger.warning(
                 "La correction de {} sur {} est très proche de {} : les "
                 "deux formulations sont conservées.",
-                cible,
-                entree.question_id,
-                autre.id,
+                marker,
+                entry.question_id,
+                other.id,
             )
 
-    trouvee.text = texte
-    trouvee.origine = "metier"
-    trouvee.auteur = auteur
-    trouvee.date = date
-    trouvee.run_id = None
+    found.text = text
+    found.origine = "metier"
+    found.auteur = author
+    found.date = date
+    found.run_id = None
     return True
 
 
-def retirer_formulations(
-    entree: EntreeReferentiel, cibles: list[str]
+def remove_answers(
+    entry: ReferenceEntry, markers: list[str]
 ) -> tuple[list[str], list[str]]:
-    """Retire du référentiel les formulations désignées.
+    """Remove the designated wordings from the repository.
 
     Args:
-        entree: Entrée à corriger, modifiée sur place.
-        cibles: Repères des formulations à retirer.
+        entry: Entry to fix, modified in place.
+        markers: Markers of the wordings to remove.
 
     Returns:
-        Le couple (textes retirés, repères introuvables). La dernière
-        formulation d'une entrée n'est jamais retirée : une entrée sans
-        réponse ne servirait plus à rien.
+        The pair (removed texts, unknown markers). The last wording of an
+        entry is never removed: an entry without an answer would be
+        useless.
     """
-    introuvables = [
-        cible
-        for cible in cibles
-        if not any(r.id == cible for r in entree.answers)
+    unknown = [
+        marker
+        for marker in markers
+        if not any(a.id == marker for a in entry.answers)
     ]
-    a_retirer = set(cibles) - set(introuvables)
-    if not a_retirer:
-        return [], introuvables
+    to_remove = set(markers) - set(unknown)
+    if not to_remove:
+        return [], unknown
 
-    restantes = [r for r in entree.answers if r.id not in a_retirer]
-    if not restantes:
+    remaining = [a for a in entry.answers if a.id not in to_remove]
+    if not remaining:
         logger.warning(
             "Retrait refusé sur {} : il ne resterait aucune formulation.",
-            entree.question_id,
+            entry.question_id,
         )
-        return [], introuvables
+        return [], unknown
 
-    retires = [r.text for r in entree.answers if r.id in a_retirer]
-    entree.answers = restantes
-    renumeroter(entree)
-    return retires, introuvables
+    removed = [a.text for a in entry.answers if a.id in to_remove]
+    entry.answers = remaining
+    renumber_answers(entry)
+    return removed, unknown
 
 
-def parser_sources(texte: str) -> tuple[list[Source], list[str]]:
-    """Analyse une liste de sources au format `doc.pdf:12, autre.pdf:3`.
+def parse_sources(text: str) -> tuple[list[Source], list[str]]:
+    """Parse a source list shaped as `doc.pdf:12, autre.pdf:3`.
 
-    Plusieurs pages d'un même document s'écrivent en répétant la page
-    seule après le document : `doc1.pdf:p12, p14` donne deux sources sur
-    `doc1.pdf`. Le préfixe `p` est facultatif sur une page qui suit un
-    document (`doc1.pdf:12`), mais **obligatoire** sur une page seule,
-    sans quoi un fragment numérique serait indiscernable d'un nom de
-    document.
+    Several pages of the same document are written by repeating the page
+    alone after the document: `doc1.pdf:p12, p14` yields two sources on
+    `doc1.pdf`. The `p` prefix is optional on a page following a document
+    (`doc1.pdf:12`) but **mandatory** on a standalone page, without which
+    a numeric fragment could not be told apart from a document name.
 
-    L'analyse est tolérante : un fragment illisible est signalé et
-    ignoré, sans faire échouer le lot.
+    Parsing is tolerant: an unreadable fragment is reported and skipped
+    rather than failing the batch.
 
     Args:
-        texte: Saisie de l'annotateur.
+        text: What the annotator typed.
 
     Returns:
-        Le couple (sources lues, fragments illisibles).
+        The pair (parsed sources, unreadable fragments).
     """
     sources: list[Source] = []
-    illisibles: list[str] = []
-    dernier_doc: str | None = None
-    for fragment in _SEPARATEURS_SOURCES.split(texte or ""):
-        nettoye = fragment.strip()
-        if not nettoye:
+    unreadable: list[str] = []
+    last_doc: str | None = None
+    for fragment in _SOURCE_SEPARATORS.split(text or ""):
+        cleaned = fragment.strip()
+        if not cleaned:
             continue
 
-        page_seule = _MOTIF_PAGE_SEULE.match(nettoye)
-        if page_seule:
-            if dernier_doc is None:
-                illisibles.append(nettoye)
+        page_only = _PAGE_ONLY_PATTERN.match(cleaned)
+        if page_only:
+            if last_doc is None:
+                unreadable.append(cleaned)
                 continue
             sources.append(
-                Source(doc_id=dernier_doc, page=int(page_seule["page"]))
+                Source(doc_id=last_doc, page=int(page_only["page"]))
             )
             continue
 
-        trouve = _MOTIF_SOURCE.match(nettoye)
-        if not trouve:
-            illisibles.append(nettoye)
+        found = _SOURCE_PATTERN.match(cleaned)
+        if not found:
+            unreadable.append(cleaned)
             continue
-        page = trouve.group("page")
-        dernier_doc = trouve.group("doc").strip()
+        page = found.group("page")
+        last_doc = found.group("doc").strip()
         sources.append(
-            Source(
-                doc_id=dernier_doc,
-                page=int(page) if page else None,
-            )
+            Source(doc_id=last_doc, page=int(page) if page else None)
         )
-    return sources, illisibles
+    return sources, unreadable
 
 
-def fusionner_sources(
-    entree: EntreeReferentiel, nouvelles: list[Source]
+def merge_sources(
+    entry: ReferenceEntry, new_sources: list[Source]
 ) -> bool:
-    """Ajoute des sources absentes de l'entrée.
+    """Add sources that are missing from the entry.
 
     Args:
-        entree: Entrée à compléter, modifiée sur place.
-        nouvelles: Sources à ajouter.
+        entry: Entry to complete, modified in place.
+        new_sources: Sources to add.
 
     Returns:
-        `True` si la liste des sources a changé.
+        `True` when the source list changed.
     """
-    connues = {
-        (source.doc_id, source.page) for source in entree.sources
-    }
-    ajoutees = False
-    for source in nouvelles:
-        if (source.doc_id, source.page) in connues:
+    known = {(source.doc_id, source.page) for source in entry.sources}
+    added = False
+    for source in new_sources:
+        if (source.doc_id, source.page) in known:
             continue
-        entree.sources.append(source)
-        connues.add((source.doc_id, source.page))
-        ajoutees = True
-    return ajoutees
+        entry.sources.append(source)
+        known.add((source.doc_id, source.page))
+        added = True
+    return added
 
 
-def remplacer_sources(
-    entree: EntreeReferentiel, nouvelles: list[Source]
+def replace_sources(
+    entry: ReferenceEntry, new_sources: list[Source]
 ) -> bool:
-    """Remplace les sources d'une entrée par une liste corrigée.
+    """Replace the sources of an entry with a corrected list.
 
-    Les `doc_version` connues sont reportées sur les sources corrigées qui
-    citent le même document : l'annotateur ne saisit que `doc.pdf:page`.
+    Known `doc_version` values are carried over to corrected sources
+    citing the same document: the annotator only types `doc.pdf:page`.
 
     Args:
-        entree: Entrée à corriger, modifiée sur place.
-        nouvelles: Sources corrigées.
+        entry: Entry to fix, modified in place.
+        new_sources: Corrected sources.
 
     Returns:
-        `True` si la liste des sources a changé.
+        `True` when the source list changed.
     """
     versions = {
         source.doc_id: source.doc_version
-        for source in entree.sources
+        for source in entry.sources
         if source.doc_version
     }
-    corrigees = [
+    corrected = [
         source.model_copy(
             update={"doc_version": versions.get(source.doc_id)}
         )
-        for source in nouvelles
+        for source in new_sources
     ]
-    if [s.model_dump() for s in corrigees] == [
-        s.model_dump() for s in entree.sources
+    if [s.model_dump() for s in corrected] == [
+        s.model_dump() for s in entry.sources
     ]:
         return False
-    entree.sources = corrigees
+    entry.sources = corrected
     return True
 
 
-def creer_entree(
+def build_entry(
     question: str,
-    textes: list[str],
+    texts: list[str],
     sources: list[Source],
-    auteur: str,
+    author: str,
     date: str,
-    origine: Origine = "metier",
+    origin: Origin = "metier",
     run_id: str | None = None,
-) -> EntreeReferentiel:
-    """Construit une entrée neuve du référentiel.
+) -> ReferenceEntry:
+    """Build a brand new repository entry.
 
     Args:
-        question: Question, telle que posée.
-        textes: Formulations validées, dans l'ordre.
-        sources: Sources citées.
-        auteur: Métier à l'origine de l'entrée.
-        date: Date de création, au format ISO.
-        origine: Provenance des formulations.
-        run_id: Occurrence de production d'origine, le cas échéant.
+        question: Question, as asked.
+        texts: Validated wordings, in order.
+        sources: Cited sources.
+        author: Business user behind the entry.
+        date: Creation date, in ISO format.
+        origin: Provenance of the wordings.
+        run_id: Originating production occurrence, when there is one.
 
     Returns:
-        L'entrée, prête à être importée.
+        The entry, ready to be imported.
     """
-    reponses = [
+    answers = [
         Answer(
-            id=f"a{indice}",
-            text=texte,
-            origine=origine,
-            auteur=auteur,
+            id=f"a{index}",
+            text=text,
+            origine=origin,
+            auteur=author,
             date=date,
             run_id=run_id,
         )
-        for indice, texte in enumerate(textes, start=1)
-        if texte.strip()
+        for index, text in enumerate(texts, start=1)
+        if text.strip()
     ]
-    return EntreeReferentiel(
-        question_id=calculer_question_id(question),
+    return ReferenceEntry(
+        question_id=compute_question_id(question),
         question=question,
-        answers=reponses,
+        answers=answers,
         sources=sources,
         derniere_verification=date,
     )
@@ -620,396 +617,396 @@ def creer_entree(
 # --------------------------------------------------------------------- #
 # Promotion : de la revue vers le référentiel
 # --------------------------------------------------------------------- #
-def _cible_promotion(arbitre: CasArbitre) -> str | None:
-    """Détermine l'entrée du référentiel visée par un arbitrage.
+def _promotion_target(arbitrated: ArbitratedCase) -> str | None:
+    """Determine which repository entry an arbitration targets.
 
     Args:
-        arbitre: Cas de revue et son arbitrage.
+        arbitrated: Review case and its arbitration.
 
     Returns:
-        Le `question_id` visé, ou `None` si l'arbitrage ne permet pas de
-        trancher — typiquement un cas incertain dont le job
-        `MEME_QUESTION` n'a pas été rempli.
+        The targeted `question_id`, or `None` when the arbitration does
+        not settle it — typically an uncertain case whose `MEME_QUESTION`
+        job was left empty.
     """
-    cas, label = arbitre.cas, arbitre.label
-    if cas.motif != "APPARIEMENT_INCERTAIN":
-        return cas.question_id
-    if label.meme_question == "OUI":
-        return cas.question_id_candidat or cas.question_id
-    if label.meme_question == "NON":
-        return cas.question_id
+    case, label = arbitrated.case, arbitrated.label
+    if case.motif != "APPARIEMENT_INCERTAIN":
+        return case.question_id
+    if label.same_question == "OUI":
+        return case.question_id_candidat or case.question_id
+    if label.same_question == "NON":
+        return case.question_id
     logger.warning(
         "Cas incertain {} sans réponse à MEME_QUESTION : laissé en attente.",
-        arbitre.external_id,
+        arbitrated.external_id,
     )
     return None
 
 
-def _texte_a_promouvoir(arbitre: CasArbitre) -> tuple[str | None, Origine]:
-    """Détermine la formulation à verser au référentiel.
+def _text_to_promote(arbitrated: ArbitratedCase) -> tuple[str | None, Origin]:
+    """Determine the wording to push into the repository.
 
     Args:
-        arbitre: Cas de revue et son arbitrage.
+        arbitrated: Review case and its arbitration.
 
     Returns:
-        Le couple (texte à verser ou `None`, origine à enregistrer).
+        The pair (text to push or `None`, origin to record).
     """
-    label = arbitre.label
-    if label.candidate_correcte == "OUI":
-        return arbitre.cas.candidate_answer, "rag_valide"
-    if label.candidate_correcte == "PRESQUE":
-        if label.version_corrigee:
-            return label.version_corrigee, "rag_corrige"
+    label = arbitrated.label
+    if label.candidate_correct == "OUI":
+        return arbitrated.case.candidate_answer, "rag_valide"
+    if label.candidate_correct == "PRESQUE":
+        if label.corrected_version:
+            return label.corrected_version, "rag_corrige"
         logger.warning(
             "Cas {} arbitré « PRESQUE » sans version corrigée : rien n'est "
             "versé au référentiel.",
-            arbitre.external_id,
+            arbitrated.external_id,
         )
     return None, "rag_valide"
 
 
-def _mettre_a_jour_sources(
-    entree: EntreeReferentiel,
-    arbitre: CasArbitre,
-    rapport: RapportPromotion,
+def _update_sources(
+    entry: ReferenceEntry,
+    arbitrated: ArbitratedCase,
+    report: PromotionReport,
 ) -> bool:
-    """Applique les corrections de sources d'un arbitrage.
+    """Apply the source corrections of an arbitration.
 
     Args:
-        entree: Entrée à mettre à jour, modifiée sur place.
-        arbitre: Cas de revue et son arbitrage.
-        rapport: Rapport à compléter des fragments illisibles.
+        entry: Entry to update, modified in place.
+        arbitrated: Review case and its arbitration.
+        report: Report to complete with the unreadable fragments.
 
     Returns:
-        `True` si les sources ont changé.
+        `True` when the sources changed.
     """
-    label = arbitre.label
-    if label.sources_corrigees:
-        sources, illisibles = parser_sources(label.sources_corrigees)
-        rapport.sources_illisibles.extend(
-            f"{arbitre.external_id} : {fragment}"
-            for fragment in illisibles
+    label = arbitrated.label
+    if label.corrected_sources:
+        sources, unreadable = parse_sources(label.corrected_sources)
+        report.unreadable_sources.extend(
+            f"{arbitrated.external_id} : {fragment}"
+            for fragment in unreadable
         )
         if sources:
-            return remplacer_sources(entree, sources)
+            return replace_sources(entry, sources)
         return False
-    if label.sources_pertinentes == "OUI":
-        return fusionner_sources(entree, arbitre.cas.sources)
+    if label.sources_relevant == "OUI":
+        return merge_sources(entry, arbitrated.case.sources)
     return False
 
 
-def _desaccord_juge_metier(arbitre: CasArbitre) -> bool:
-    """Dit si le métier a contredit le LLM-as-judge.
+def _judge_business_disagreement(arbitrated: ArbitratedCase) -> bool:
+    """Tell whether the business team contradicted the LLM-as-judge.
 
     Args:
-        arbitre: Cas de revue et son arbitrage.
+        arbitrated: Review case and its arbitration.
 
     Returns:
-        `True` si un verdict de juge existe et diverge de l'arbitrage
-        métier (`OUI` vaut conforme, `NON` non conforme ; `PRESQUE` est
-        traité comme un désaccord avec un juge qui disait « conforme »).
+        `True` when a judge verdict exists and diverges from the business
+        arbitration (`OUI` means compliant, `NON` non compliant;
+        `PRESQUE` counts as a disagreement with a judge saying
+        « compliant »).
     """
-    verdict = arbitre.cas.verdict_juge
-    if verdict is None or arbitre.label.candidate_correcte is None:
+    verdict = arbitrated.case.verdict_juge
+    if verdict is None or arbitrated.label.candidate_correct is None:
         return False
-    metier_conforme = arbitre.label.candidate_correcte == "OUI"
-    return verdict.conforme != metier_conforme
+    business_compliant = arbitrated.label.candidate_correct == "OUI"
+    return verdict.conforme != business_compliant
 
 
-def promouvoir_lot(
+def promote_batch(
     kili: object,
-    id_referentiel: str,
-    id_revue: str,
-    parametres: Parametres,
-) -> RapportPromotion:
-    """Transfère les arbitrages du projet B vers le projet A.
+    reference_project_id: str,
+    review_project_id: str,
+    settings: Settings,
+) -> PromotionReport:
+    """Move the arbitrations of project B into project A.
 
-    L'opération est idempotente : un cas déjà traité n'est plus
-    `EN_ATTENTE`, une variante déjà présente est écartée comme
-    quasi-doublon, et la `version` n'est incrémentée que si l'état change.
+    The operation is idempotent: a processed case is no longer
+    `EN_ATTENTE`, a wording already present is discarded as a near
+    duplicate, and `version` is bumped only when the state changes.
 
     Args:
-        kili: Client Kili.
-        id_referentiel: Identifiant du projet A.
-        id_revue: Identifiant du projet B.
-        parametres: Paramètres d'exécution.
+        kili: Kili client.
+        reference_project_id: Identifier of project A.
+        review_project_id: Identifier of project B.
+        settings: Runtime settings.
 
     Returns:
-        Le rapport de l'exécution.
+        The report of the run.
     """
-    rapport = RapportPromotion()
-    entrees = {
-        entree.question_id: entree
-        for entree in charger_entrees(kili, id_referentiel)
+    report = PromotionReport()
+    entries = {
+        entry.question_id: entry
+        for entry in load_entries(kili, reference_project_id)
     }
-    appliquer_labels_referentiel(
-        kili, id_referentiel, entrees, parametres, rapport
+    apply_reference_labels(
+        kili, reference_project_id, entries, settings, report
     )
 
-    arbitres = lire_cas_arbitres(kili, id_revue)
-    rapport.cas_lus = len(arbitres)
-    promus: list[str] = []
-    rejetes: list[str] = []
-    cas_par_id: dict[str, CasRevue] = {}
+    arbitrated_cases = read_arbitrated_cases(kili, review_project_id)
+    report.cases_read = len(arbitrated_cases)
+    promoted: list[str] = []
+    rejected: list[str] = []
+    cases_by_id: dict[str, ReviewCase] = {}
 
-    for arbitre in arbitres:
-        cas_par_id[arbitre.external_id] = arbitre.cas
-        question_id = _cible_promotion(arbitre)
+    for arbitrated in arbitrated_cases:
+        cases_by_id[arbitrated.external_id] = arbitrated.case
+        question_id = _promotion_target(arbitrated)
         if question_id is None:
-            rapport.ignores += 1
+            report.skipped += 1
             continue
 
-        texte, origine = _texte_a_promouvoir(arbitre)
-        date = arbitre.label.date or aujourdhui()
-        if _desaccord_juge_metier(arbitre):
-            rapport.desaccords_juge_metier += 1
+        text, origin = _text_to_promote(arbitrated)
+        date = arbitrated.label.date or today()
+        if _judge_business_disagreement(arbitrated):
+            report.judge_business_disagreements += 1
 
-        if question_id not in entrees:
-            if texte is None:
-                rejetes.append(arbitre.external_id)
-                rapport.rejetes += 1
+        if question_id not in entries:
+            if text is None:
+                rejected.append(arbitrated.external_id)
+                report.rejected += 1
                 continue
-            entree = creer_entree(
-                question=arbitre.cas.question,
-                textes=[texte],
-                sources=list(arbitre.cas.sources),
-                auteur=arbitre.label.auteur,
+            entry = build_entry(
+                question=arbitrated.case.question,
+                texts=[text],
+                sources=list(arbitrated.case.sources),
+                author=arbitrated.label.author,
                 date=date,
-                origine=origine,
-                run_id=arbitre.cas.run_id,
+                origin=origin,
+                run_id=arbitrated.case.run_id,
             )
-            _mettre_a_jour_sources(entree, arbitre, rapport)
-            importer_entrees(
+            _update_sources(entry, arbitrated, report)
+            import_entries(
                 kili,
-                id_referentiel,
-                [entree],
-                parametres.taille_max_metadata,
+                reference_project_id,
+                [entry],
+                settings.max_metadata_size,
             )
-            journaliser_variante(
-                kili, id_referentiel, entree.question_id, texte
+            append_audit_label(
+                kili, reference_project_id, entry.question_id, text
             )
-            entrees[entree.question_id] = entree
-            rapport.nouvelles_entrees += 1
-            rapport.variantes_ajoutees += 1
-            promus.append(arbitre.external_id)
-            rapport.promus += 1
-            rapport.details.append(
+            entries[entry.question_id] = entry
+            report.new_entries += 1
+            report.variants_added += 1
+            promoted.append(arbitrated.external_id)
+            report.promoted += 1
+            report.details.append(
                 {
-                    "external_id": arbitre.external_id,
+                    "external_id": arbitrated.external_id,
                     "action": "nouvelle_entree",
-                    "question_id": entree.question_id,
+                    "question_id": entry.question_id,
                 }
             )
             continue
 
-        entree = entrees[question_id]
-        variante_ajoutee = False
-        if texte is not None:
-            variante_ajoutee = ajouter_variante(
-                entree,
-                texte=texte,
-                origine=origine,
-                auteur=arbitre.label.auteur,
+        entry = entries[question_id]
+        variant_added = False
+        if text is not None:
+            variant_added = add_variant(
+                entry,
+                text=text,
+                origin=origin,
+                author=arbitrated.label.author,
                 date=date,
-                run_id=arbitre.cas.run_id,
-                seuil_quasi_doublon=parametres.seuil_quasi_doublon,
-                plafond=parametres.plafond_variantes,
+                run_id=arbitrated.case.run_id,
+                near_duplicate_threshold=settings.near_duplicate_threshold,
+                cap=settings.variant_cap,
             )
-        sources_changees = _mettre_a_jour_sources(entree, arbitre, rapport)
+        sources_changed = _update_sources(entry, arbitrated, report)
 
-        if variante_ajoutee or sources_changees:
-            entree.version += 1
-            entree.derniere_verification = date
-            ecrire_entree(
+        if variant_added or sources_changed:
+            entry.version += 1
+            entry.derniere_verification = date
+            write_entry(
                 kili,
-                id_referentiel,
-                entree,
-                parametres.taille_max_metadata,
+                reference_project_id,
+                entry,
+                settings.max_metadata_size,
             )
-            rapport.entrees_mises_a_jour += 1
-            if variante_ajoutee:
-                rapport.variantes_ajoutees += 1
-                journaliser_variante(
-                    kili, id_referentiel, entree.question_id, texte or ""
+            report.entries_updated += 1
+            if variant_added:
+                report.variants_added += 1
+                append_audit_label(
+                    kili,
+                    reference_project_id,
+                    entry.question_id,
+                    text or "",
                 )
 
-        if texte is None:
-            rejetes.append(arbitre.external_id)
-            rapport.rejetes += 1
+        if text is None:
+            rejected.append(arbitrated.external_id)
+            report.rejected += 1
         else:
-            promus.append(arbitre.external_id)
-            rapport.promus += 1
-        rapport.details.append(
+            promoted.append(arbitrated.external_id)
+            report.promoted += 1
+        report.details.append(
             {
-                "external_id": arbitre.external_id,
-                "action": "variante" if variante_ajoutee else "sans_effet",
-                "question_id": entree.question_id,
+                "external_id": arbitrated.external_id,
+                "action": "variante" if variant_added else "sans_effet",
+                "question_id": entry.question_id,
             }
         )
 
-    marquer_statut(kili, id_revue, promus, "PROMU", cas_par_id)
-    marquer_statut(kili, id_revue, rejetes, "REJETE", cas_par_id)
-    return rapport
+    set_review_status(
+        kili, review_project_id, promoted, "PROMU", cases_by_id
+    )
+    set_review_status(
+        kili, review_project_id, rejected, "REJETE", cases_by_id
+    )
+    return report
 
 
-def _appliquer_un_label(
-    entree: EntreeReferentiel,
+def _apply_label(
+    entry: ReferenceEntry,
     label: dict,
-    parametres: Parametres,
-    rapport: RapportPromotion,
+    settings: Settings,
+    report: PromotionReport,
 ) -> bool:
-    """Applique un arbitrage du projet A à une entrée.
+    """Apply one project A arbitration to an entry.
 
     Args:
-        entree: Entrée à mettre à jour, modifiée sur place.
-        label: Label humain renvoyé par Kili.
-        parametres: Paramètres d'exécution.
-        rapport: Rapport à compléter.
+        entry: Entry to update, modified in place.
+        label: Human label returned by Kili.
+        settings: Runtime settings.
+        report: Report to complete.
 
     Returns:
-        `True` si l'entrée a changé.
+        `True` when the entry changed.
     """
-    reponse = label.get("jsonResponse") or {}
-    auteur = auteur_de(label)
-    date = (label.get("createdAt") or "")[:10] or aujourdhui()
-    change = False
+    response = label.get("jsonResponse") or {}
+    author = author_of(label)
+    date = (label.get("createdAt") or "")[:10] or today()
+    changed = False
 
-    toujours_valide = categorie(reponse, "ENTREE_TOUJOURS_VALIDE")
-    if toujours_valide == "OUI" and (
-        entree.statut != "ACTIF" or entree.derniere_verification != date
+    still_valid = category(response, "ENTREE_TOUJOURS_VALIDE")
+    if still_valid == "OUI" and (
+        entry.statut != "ACTIF" or entry.derniere_verification != date
     ):
-        entree.statut = "ACTIF"
-        entree.derniere_verification = date
-        rapport.entrees_revalidees += 1
-        change = True
-    elif toujours_valide == "NON" and entree.statut != "ARCHIVE":
-        entree.statut = "ARCHIVE"
-        entree.derniere_verification = date
-        rapport.entrees_archivees += 1
-        change = True
+        entry.statut = "ACTIF"
+        entry.derniere_verification = date
+        report.entries_revalidated += 1
+        changed = True
+    elif still_valid == "NON" and entry.statut != "ARCHIVE":
+        entry.statut = "ARCHIVE"
+        entry.derniere_verification = date
+        report.entries_archived += 1
+        changed = True
 
-    texte = transcription(reponse, "REPONSE_VALIDEE")
-    cible = categorie(reponse, "FORMULATION_CIBLE")
-    if texte and cible:
+    text = transcription(response, "REPONSE_VALIDEE")
+    marker = category(response, "FORMULATION_CIBLE")
+    if text and marker:
         try:
-            if remplacer_formulation(
-                entree,
-                cible=cible,
-                texte=texte,
-                auteur=auteur,
+            if replace_answer(
+                entry,
+                marker=marker,
+                text=text,
+                author=author,
                 date=date,
-                seuil_quasi_doublon=parametres.seuil_quasi_doublon,
+                near_duplicate_threshold=settings.near_duplicate_threshold,
             ):
-                rapport.formulations_remplacees += 1
-                change = True
-        except CibleIntrouvableError as erreur:
-            logger.warning("{}", erreur)
-            rapport.cibles_introuvables.append(str(erreur))
-    elif texte and ajouter_variante(
-        entree,
-        texte=texte,
-        origine="metier",
-        auteur=auteur,
+                report.answers_replaced += 1
+                changed = True
+        except UnknownAnswerMarkerError as error:
+            logger.warning("{}", error)
+            report.unknown_markers.append(str(error))
+    elif text and add_variant(
+        entry,
+        text=text,
+        origin="metier",
+        author=author,
         date=date,
         run_id=None,
-        seuil_quasi_doublon=parametres.seuil_quasi_doublon,
-        plafond=parametres.plafond_variantes,
+        near_duplicate_threshold=settings.near_duplicate_threshold,
+        cap=settings.variant_cap,
     ):
-        rapport.variantes_ajoutees += 1
-        change = True
-    elif cible and not texte:
+        report.variants_added += 1
+        changed = True
+    elif marker and not text:
         logger.warning(
-            "Repère {} désigné sur {} sans texte de remplacement : "
-            "ignoré.",
-            cible,
-            entree.question_id,
+            "Repère {} désigné sur {} sans texte de remplacement : ignoré.",
+            marker,
+            entry.question_id,
         )
 
-    a_retirer = categories(reponse, "FORMULATIONS_A_RETIRER")
-    if a_retirer:
-        retires, introuvables = retirer_formulations(entree, a_retirer)
-        rapport.formulations_retirees += len(retires)
-        rapport.cibles_introuvables.extend(
-            f"{entree.question_id} : repère {repere} introuvable"
-            for repere in introuvables
+    to_remove = categories(response, "FORMULATIONS_A_RETIRER")
+    if to_remove:
+        removed, unknown = remove_answers(entry, to_remove)
+        report.answers_removed += len(removed)
+        report.unknown_markers.extend(
+            f"{entry.question_id} : repère {marker} introuvable"
+            for marker in unknown
         )
-        change = change or bool(retires)
+        changed = changed or bool(removed)
 
-    sources_texte = transcription(reponse, "SOURCES_CORRIGEES")
-    if sources_texte:
-        sources, illisibles = parser_sources(sources_texte)
-        rapport.sources_illisibles.extend(
-            f"{entree.question_id} : {fragment}" for fragment in illisibles
+    sources_text = transcription(response, "SOURCES_CORRIGEES")
+    if sources_text:
+        sources, unreadable = parse_sources(sources_text)
+        report.unreadable_sources.extend(
+            f"{entry.question_id} : {fragment}" for fragment in unreadable
         )
         if sources:
-            retirees = {
-                (s.doc_id, s.page) for s in entree.sources
+            dropped = {
+                (s.doc_id, s.page) for s in entry.sources
             } - {(s.doc_id, s.page) for s in sources}
-            if remplacer_sources(entree, sources):
-                change = True
-            for doc_id, page in sorted(retirees):
+            if replace_sources(entry, sources):
+                changed = True
+            for doc_id, page in sorted(dropped):
                 logger.info(
                     "Source retirée de {} par correction : {}:{}",
-                    entree.question_id,
+                    entry.question_id,
                     doc_id,
                     page,
                 )
-                rapport.sources_retirees.append(
-                    f"{entree.question_id} : {doc_id}:{page}"
+                report.removed_sources.append(
+                    f"{entry.question_id} : {doc_id}:{page}"
                 )
-    return change
+    return changed
 
 
-def appliquer_labels_referentiel(
+def apply_reference_labels(
     kili: object,
     project_id: str,
-    entrees: dict[str, EntreeReferentiel],
-    parametres: Parametres,
-    rapport: RapportPromotion,
+    entries: dict[str, ReferenceEntry],
+    settings: Settings,
+    report: PromotionReport,
 ) -> None:
-    """Applique les arbitrages portés par les assets du projet A.
+    """Apply the arbitrations carried by the project A assets.
 
-    Tous les labels humains créés **depuis le filigrane**
-    `derniere_promotion` sont appliqués, du plus ancien au plus récent :
-    un métier qui corrige deux formulations enregistre deux fois, et les
-    deux corrections sont reprises. Le filigrane est ensuite avancé, ce
-    qui rend l'opération idempotente sans dépendre de la comparaison des
-    états.
+    Every human label created **since the `derniere_promotion`
+    watermark** is applied, oldest first: a business user correcting two
+    wordings saves twice, and both corrections are taken. The watermark
+    is then moved forward, which makes the operation idempotent without
+    relying on state comparison.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet A.
-        entrees: Entrées du référentiel, par `question_id`, modifiées sur
-            place.
-        parametres: Paramètres d'exécution.
-        rapport: Rapport à compléter.
+        kili: Kili client.
+        project_id: Identifier of project A.
+        entries: Repository entries, by `question_id`, modified in place.
+        settings: Runtime settings.
+        report: Report to complete.
     """
-    for asset in kili.assets(project_id=project_id, fields=CHAMPS_ENTREE):
-        metadata = charger_metadata(asset.get("jsonMetadata"))
-        entree = entrees.get(metadata.get("question_id", ""))
-        if entree is None:
+    for asset in kili.assets(project_id=project_id, fields=ENTRY_FIELDS):
+        metadata = load_metadata(asset.get("jsonMetadata"))
+        entry = entries.get(metadata.get("question_id", ""))
+        if entry is None:
             continue
 
-        filigrane = entree.derniere_promotion or ""
-        nouveaux = [
+        watermark = entry.derniere_promotion or ""
+        pending = [
             label
-            for label in labels_humains(asset.get("labels") or [])
-            if (label.get("createdAt") or "") > filigrane
+            for label in human_labels(asset.get("labels") or [])
+            if (label.get("createdAt") or "") > watermark
         ]
-        if not nouveaux:
+        if not pending:
             continue
 
-        change = False
-        for label in nouveaux:
-            change = (
-                _appliquer_un_label(entree, label, parametres, rapport)
-                or change
-            )
-        rapport.labels_referentiel_consommes += len(nouveaux)
+        changed = False
+        for label in pending:
+            changed = _apply_label(entry, label, settings, report) or changed
+        report.reference_labels_consumed += len(pending)
 
-        if change:
-            entree.version += 1
-        entree.derniere_promotion = nouveaux[-1].get("createdAt") or ""
-        ecrire_entree(
-            kili, project_id, entree, parametres.taille_max_metadata
-        )
+        if changed:
+            entry.version += 1
+        entry.derniere_promotion = pending[-1].get("createdAt") or ""
+        write_entry(kili, project_id, entry, settings.max_metadata_size)

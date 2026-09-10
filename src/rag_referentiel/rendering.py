@@ -1,26 +1,23 @@
-"""Composition des cartes rich text vues par le métier dans Kili.
+"""Composition of the rich text cards the business team sees in Kili.
 
-Les couleurs sont portées par les styles CSS documentés pour le format
-rich text. Le rendu réel dépend de la version **serveur** de l'instance
-Kili : rien n'est garanti tant que ce n'est pas vu à l'écran (voir la
-section « À vérifier au premier run » du README).
+Colours are carried by the CSS styles documented for the rich text
+format. The actual rendering depends on the **server** version of the
+Kili instance: nothing is guaranteed until it has been seen on screen
+(see the « À vérifier au premier run » section of the README).
+
+Every displayed string stays in French: this is the business interface.
 """
 
-from .markdown_to_richtext import markdown_vers_richtext
-from .richtext import (
-    GenerateurIds,
-    document,
-    noeud_element,
-    noeud_texte,
-)
-from .schemas import Answer, CasRevue, EntreeReferentiel, Source
+from .markdown_to_richtext import markdown_to_richtext
+from .richtext import IdGenerator, document, element_node, text_node
+from .schemas import Answer, ReferenceEntry, ReviewCase, Source
 
-FOND_VALIDE = "#e8f5e9"
-FOND_CANDIDATE = "#fff3e0"
-FOND_ENTETE = "#eeeeee"
-GRIS = "#616161"
+VALIDATED_BACKGROUND = "#e8f5e9"
+CANDIDATE_BACKGROUND = "#fff3e0"
+HEADER_BACKGROUND = "#eeeeee"
+GREY = "#616161"
 
-LIBELLES_MOTIF = {
+REASON_LABELS = {
     "NOUVELLE_QUESTION": (
         "Question inédite : elle n'existe pas encore dans le référentiel."
     ),
@@ -37,262 +34,248 @@ LIBELLES_MOTIF = {
 }
 
 
-def _appliquer_styles(blocs: list[dict], styles: dict[str, str]) -> list[dict]:
-    """Applique des styles CSS à une liste de nœuds de bloc.
+def _apply_styles(blocks: list[dict], styles: dict[str, str]) -> list[dict]:
+    """Apply CSS styles to a list of block nodes.
 
     Args:
-        blocs: Nœuds de bloc à styler.
-        styles: Styles CSS à ajouter.
+        blocks: Block nodes to style.
+        styles: CSS styles to add.
 
     Returns:
-        Les mêmes nœuds, stylés (modifiés sur place).
+        The same nodes, styled (modified in place).
     """
-    for bloc in blocs:
-        bloc.update(styles)
-    return blocs
+    for block in blocks:
+        block.update(styles)
+    return blocks
 
 
-def _paragraphe(
-    texte: str,
-    generateur: GenerateurIds,
-    marques: set[str] | None = None,
+def _paragraph(
+    text: str,
+    generator: IdGenerator,
+    marks: set[str] | None = None,
     styles: dict[str, str] | None = None,
 ) -> dict:
-    """Construit un paragraphe d'une seule ligne.
+    """Build a single line paragraph.
 
     Args:
-        texte: Contenu du paragraphe.
-        generateur: Générateur d'identifiants du document.
-        marques: Marques appliquées au texte.
-        styles: Styles CSS appliqués au paragraphe.
+        text: Content of the paragraph.
+        generator: Id generator of the document.
+        marks: Marks applied to the text.
+        styles: CSS styles applied to the paragraph.
 
     Returns:
-        Le nœud paragraphe.
+        The paragraph node.
     """
-    return noeud_element(
-        "p",
-        [noeud_texte(texte, generateur, marques)],
-        generateur,
-        styles,
+    return element_node(
+        "p", [text_node(text, generator, marks)], generator, styles
     )
 
 
-def _titre(niveau: str, texte: str, generateur: GenerateurIds) -> dict:
-    """Construit un titre.
+def _heading(level: str, text: str, generator: IdGenerator) -> dict:
+    """Build a heading.
 
     Args:
-        niveau: `h1` à `h4`.
-        texte: Contenu du titre.
-        generateur: Générateur d'identifiants du document.
+        level: `h1` to `h4`.
+        text: Content of the heading.
+        generator: Id generator of the document.
 
     Returns:
-        Le nœud titre.
+        The heading node.
     """
-    return noeud_element(
-        niveau, [noeud_texte(texte, generateur)], generateur
-    )
+    return element_node(level, [text_node(text, generator)], generator)
 
 
-def _table_sources(
-    sources: list[Source], generateur: GenerateurIds
+def _sources_table(
+    sources: list[Source], generator: IdGenerator
 ) -> list[dict]:
-    """Rend les sources sous forme de tableau `doc_id` / `page`.
+    """Render sources as a `doc_id` / `page` table.
 
     Args:
-        sources: Sources à afficher.
-        generateur: Générateur d'identifiants du document.
+        sources: Sources to display.
+        generator: Id generator of the document.
 
     Returns:
-        Le tableau, ou un paragraphe si la liste est vide.
+        The table, or a paragraph when the list is empty.
     """
     if not sources:
         return [
-            _paragraphe(
-                "Aucune source citée.", generateur, styles={"color": GRIS}
+            _paragraph(
+                "Aucune source citée.", generator, styles={"color": GREY}
             )
         ]
 
-    def cellule(texte: str, entete: bool) -> dict:
-        return noeud_element(
+    def cell(text: str, header: bool) -> dict:
+        return element_node(
             "td",
-            [
-                noeud_texte(
-                    texte, generateur, {"bold"} if entete else None
-                )
-            ],
-            generateur,
-            {"backgroundColor": FOND_ENTETE} if entete else None,
+            [text_node(text, generator, {"bold"} if header else None)],
+            generator,
+            {"backgroundColor": HEADER_BACKGROUND} if header else None,
         )
 
-    entete = noeud_element(
+    head = element_node(
         "thead",
         [
-            noeud_element(
+            element_node(
                 "tr",
-                [cellule("Document", True), cellule("Page", True)],
-                generateur,
+                [cell("Document", True), cell("Page", True)],
+                generator,
             )
         ],
-        generateur,
+        generator,
     )
-    lignes = [
-        noeud_element(
+    rows = [
+        element_node(
             "tr",
             [
-                cellule(source.doc_id, False),
-                cellule(
-                    "—" if source.page is None else str(source.page), False
-                ),
+                cell(source.doc_id, False),
+                cell("—" if source.page is None else str(source.page), False),
             ],
-            generateur,
+            generator,
         )
         for source in sources
     ]
-    corps = noeud_element("tbody", lignes, generateur)
-    return [noeud_element("table", [entete, corps], generateur)]
+    body = element_node("tbody", rows, generator)
+    return [element_node("table", [head, body], generator)]
 
 
-def _bloc_reponse(
-    reponse: Answer, generateur: GenerateurIds, fond: str
+def _answer_block(
+    answer: Answer, generator: IdGenerator, background: str
 ) -> list[dict]:
-    """Rend une formulation validée et sa provenance.
+    """Render a validated wording and where it comes from.
 
-    Le repère (`a1`, `a2`, …) ouvre la ligne de provenance : c'est lui que
-    l'annotateur choisit dans les jobs `FORMULATION_CIBLE` et
-    `FORMULATIONS_A_RETIRER` du projet A.
+    The marker (`a1`, `a2`, …) opens the provenance line: it is what the
+    annotator picks in the `FORMULATION_CIBLE` and
+    `FORMULATIONS_A_RETIRER` jobs of project A.
 
     Args:
-        reponse: Formulation validée.
-        generateur: Générateur d'identifiants du document.
-        fond: Couleur de fond du texte de la réponse.
+        answer: Validated wording.
+        generator: Id generator of the document.
+        background: Background colour of the answer text.
 
     Returns:
-        Les nœuds de bloc de la réponse.
+        The block nodes of the answer.
     """
-    blocs = _appliquer_styles(
-        markdown_vers_richtext(reponse.text, generateur),
-        {"backgroundColor": fond, "padding": "4px 8px"},
+    blocks = _apply_styles(
+        markdown_to_richtext(answer.text, generator),
+        {"backgroundColor": background, "padding": "4px 8px"},
     )
     provenance = (
-        f"{reponse.id} · origine : {reponse.origine} · "
-        f"auteur : {reponse.auteur} · date : {reponse.date}"
+        f"{answer.id} · origine : {answer.origine} · "
+        f"auteur : {answer.auteur} · date : {answer.date}"
     )
-    if reponse.run_id:
-        provenance += f" · run : {reponse.run_id}"
-    blocs.append(
-        _paragraphe(provenance, generateur, styles={"color": GRIS})
-    )
-    return blocs
+    if answer.run_id:
+        provenance += f" · run : {answer.run_id}"
+    blocks.append(_paragraph(provenance, generator, styles={"color": GREY}))
+    return blocks
 
 
-def rendu_asset_referentiel(entree: EntreeReferentiel) -> list[dict]:
-    """Compose la carte rich text d'une entrée du référentiel (projet A).
+def render_reference_asset(entry: ReferenceEntry) -> list[dict]:
+    """Compose the rich text card of a reference entry (project A).
 
     Args:
-        entree: Entrée du référentiel à rendre.
+        entry: Reference entry to render.
 
     Returns:
-        Le `json_content` de l'asset.
+        The `json_content` of the asset.
     """
-    generateur = GenerateurIds()
-    blocs: list[dict] = [_titre("h1", entree.question, generateur)]
+    generator = IdGenerator()
+    blocks: list[dict] = [_heading("h1", entry.question, generator)]
 
-    entete = (
-        f"statut : {entree.statut} · version : {entree.version} · "
-        f"identifiant : {entree.question_id}"
+    header = (
+        f"statut : {entry.statut} · version : {entry.version} · "
+        f"identifiant : {entry.question_id}"
     )
-    if entree.derniere_verification:
-        entete += f" · vérifiée le {entree.derniere_verification}"
-    blocs.append(_paragraphe(entete, generateur, styles={"color": GRIS}))
+    if entry.derniere_verification:
+        header += f" · vérifiée le {entry.derniere_verification}"
+    blocks.append(_paragraph(header, generator, styles={"color": GREY}))
 
-    blocs.append(_titre("h2", "Formulations validées", generateur))
-    if not entree.answers:
-        blocs.append(
-            _paragraphe(
+    blocks.append(_heading("h2", "Formulations validées", generator))
+    if not entry.answers:
+        blocks.append(
+            _paragraph(
                 "Aucune formulation validée pour le moment.",
-                generateur,
-                styles={"color": GRIS},
+                generator,
+                styles={"color": GREY},
             )
         )
-    for reponse in entree.answers:
-        blocs.extend(_bloc_reponse(reponse, generateur, FOND_VALIDE))
+    for answer in entry.answers:
+        blocks.extend(_answer_block(answer, generator, VALIDATED_BACKGROUND))
 
-    blocs.append(_titre("h2", "Sources", generateur))
-    blocs.extend(_table_sources(entree.sources, generateur))
-    return document(blocs)
+    blocks.append(_heading("h2", "Sources", generator))
+    blocks.extend(_sources_table(entry.sources, generator))
+    return document(blocks)
 
 
-def rendu_asset_revue(
-    cas: CasRevue,
-    reponses_validees: list[Answer],
-    question_candidate: str | None = None,
+def render_review_asset(
+    case: ReviewCase,
+    validated_answers: list[Answer],
+    candidate_question: str | None = None,
 ) -> list[dict]:
-    """Compose la carte rich text d'un cas de revue (projet B).
+    """Compose the rich text card of a review case (project B).
 
-    Le verdict du LLM-as-judge n'est **jamais** rendu : l'afficher
-    ancrerait l'annotateur sur l'avis que la revue cherche à auditer.
+    The LLM-as-judge verdict is **never** rendered: showing it would
+    anchor the annotator on the very opinion the review audits.
 
     Args:
-        cas: Cas de revue à rendre.
-        reponses_validees: Formulations déjà validées pour cette question.
-        question_candidate: Question du référentiel proposée par
-            l'appariement, à afficher quand le motif est
-            `APPARIEMENT_INCERTAIN`.
+        case: Review case to render.
+        validated_answers: Wordings already validated for this question.
+        candidate_question: Reference question proposed by the matching,
+            to display when the reason is `APPARIEMENT_INCERTAIN`.
 
     Returns:
-        Le `json_content` de l'asset.
+        The `json_content` of the asset.
     """
-    generateur = GenerateurIds()
-    blocs: list[dict] = [_titre("h1", cas.question, generateur)]
+    generator = IdGenerator()
+    blocks: list[dict] = [_heading("h1", case.question, generator)]
 
-    blocs.append(
-        noeud_element(
+    blocks.append(
+        element_node(
             "blockquote",
             [
-                _paragraphe(
-                    LIBELLES_MOTIF.get(cas.motif, cas.motif), generateur
+                _paragraph(
+                    REASON_LABELS.get(case.motif, case.motif), generator
                 )
             ],
-            generateur,
+            generator,
             {"borderLeft": "3px solid #9e9e9e", "padding": "4px 8px"},
         )
     )
 
-    blocs.append(_titre("h2", "Formulations déjà validées", generateur))
-    if not reponses_validees:
-        blocs.append(
-            _paragraphe(
+    blocks.append(_heading("h2", "Formulations déjà validées", generator))
+    if not validated_answers:
+        blocks.append(
+            _paragraph(
                 "Aucune : cette question n'est pas encore au référentiel.",
-                generateur,
-                styles={"color": GRIS},
+                generator,
+                styles={"color": GREY},
             )
         )
-    for reponse in reponses_validees:
-        blocs.extend(_bloc_reponse(reponse, generateur, FOND_VALIDE))
+    for answer in validated_answers:
+        blocks.extend(_answer_block(answer, generator, VALIDATED_BACKGROUND))
 
-    blocs.append(_titre("h2", "Réponse générée à arbitrer", generateur))
-    blocs.extend(
-        _appliquer_styles(
-            markdown_vers_richtext(cas.candidate_answer, generateur),
-            {"backgroundColor": FOND_CANDIDATE, "padding": "4px 8px"},
+    blocks.append(_heading("h2", "Réponse générée à arbitrer", generator))
+    blocks.extend(
+        _apply_styles(
+            markdown_to_richtext(case.candidate_answer, generator),
+            {"backgroundColor": CANDIDATE_BACKGROUND, "padding": "4px 8px"},
         )
     )
 
-    blocs.append(_titre("h2", "Sources citées", generateur))
-    blocs.extend(_table_sources(cas.sources, generateur))
+    blocks.append(_heading("h2", "Sources citées", generator))
+    blocks.extend(_sources_table(case.sources, generator))
 
-    if cas.motif == "APPARIEMENT_INCERTAIN" and question_candidate:
-        blocs.append(
-            _titre("h2", "Question du référentiel proposée", generateur)
+    if case.motif == "APPARIEMENT_INCERTAIN" and candidate_question:
+        blocks.append(
+            _heading("h2", "Question du référentiel proposée", generator)
         )
-        blocs.append(
-            _paragraphe(
-                question_candidate,
-                generateur,
+        blocks.append(
+            _paragraph(
+                candidate_question,
+                generator,
                 styles={
-                    "backgroundColor": FOND_ENTETE,
+                    "backgroundColor": HEADER_BACKGROUND,
                     "padding": "4px 8px",
                 },
             )
         )
-    return document(blocs)
+    return document(blocks)

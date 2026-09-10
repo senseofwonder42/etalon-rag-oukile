@@ -1,126 +1,116 @@
-"""Démonstration de bout en bout, avec des données factices.
+"""End to end demonstration, with fake data.
 
-Objectif : montrer l'interface d'annotation au métier en moins de cinq
-minutes, sans clé d'API de modèle — l'appariement et le juge sont hors
-ligne par défaut.
+Goal: show the annotation interface to the business team in under five
+minutes, with no model API key — matching and judging are offline by
+default.
 """
 
 import argparse
 from pathlib import Path
 
-from _commun import lire_jsonl, parametres
+from _commun import read_jsonl, settings
 from loguru import logger
-from monitor_run import construire_juge, construire_matcher, traiter
+from monitor_run import build_judge, build_matcher, process
 
-from rag_referentiel.client import creer_client
-from rag_referentiel.config import Parametres
+from rag_referentiel.client import create_client
+from rag_referentiel.config import Settings
+from rag_referentiel.referentiel import build_entry, import_entries
 from rag_referentiel.referentiel import (
-    creer_entree,
-    importer_entrees,
+    create_project as create_reference_project,
 )
-from rag_referentiel.referentiel import (
-    creer_projet as creer_projet_referentiel,
-)
-from rag_referentiel.revue import (
-    calculer_identifiants,
-    creer_cas,
-)
-from rag_referentiel.revue import (
-    creer_projet as creer_projet_revue,
-)
-from rag_referentiel.schemas import EntreeInitiale, aujourdhui
+from rag_referentiel.revue import compute_external_ids, create_cases
+from rag_referentiel.revue import create_project as create_review_project
+from rag_referentiel.schemas import SeedEntry, today
 
 
-def url_projet(config: Parametres, project_id: str) -> str:
-    """Construit l'URL d'un projet à partir de l'endpoint d'API.
+def project_url(config: Settings, project_id: str) -> str:
+    """Build the URL of a project from the API endpoint.
 
     Args:
-        config: Paramètres d'exécution.
-        project_id: Identifiant du projet.
+        config: Runtime settings.
+        project_id: Identifier of the project.
 
     Returns:
-        L'URL du projet dans l'application Kili.
+        The URL of the project in the Kili application.
     """
-    racine = config.kili_api_endpoint.split("/api/")[0]
-    return f"{racine}/label/projects/{project_id}"
+    root = config.kili_api_endpoint.split("/api/")[0]
+    return f"{root}/label/projects/{project_id}"
 
 
-def creer(arguments: argparse.Namespace, config: Parametres) -> None:
-    """Monte la démonstration complète.
+def create_demo(arguments: argparse.Namespace, config: Settings) -> None:
+    """Set up the whole demonstration.
 
     Args:
-        arguments: Arguments de la ligne de commande.
-        config: Paramètres d'exécution.
+        arguments: Command line arguments.
+        config: Runtime settings.
     """
-    kili = creer_client(config)
+    kili = create_client(config)
 
-    id_referentiel = creer_projet_referentiel(
-        kili, config.titre_projet_referentiel
+    reference_id = create_reference_project(
+        kili, config.reference_project_title
     )
-    date = aujourdhui()
-    entrees = [
-        creer_entree(
-            question=initiale.question,
-            textes=initiale.answers,
-            sources=initiale.sources,
-            auteur="demo",
+    date = today()
+    entries = [
+        build_entry(
+            question=seed.question,
+            texts=seed.answers,
+            sources=seed.sources,
+            author="demo",
             date=date,
         )
-        for initiale in (
-            EntreeInitiale.model_validate(ligne)
-            for ligne in lire_jsonl(arguments.referentiel)
+        for seed in (
+            SeedEntry.model_validate(line)
+            for line in read_jsonl(arguments.reference_path)
         )
-        if initiale.question.strip()
+        if seed.question.strip()
     ]
-    importer_entrees(
-        kili, id_referentiel, entrees, config.taille_max_metadata
-    )
+    import_entries(kili, reference_id, entries, config.max_metadata_size)
 
-    id_revue = creer_projet_revue(kili, config.titre_projet_revue)
-    cas, rapport = traiter(
-        lire_jsonl(arguments.run),
-        entrees,
-        construire_matcher(entrees, config, hors_ligne=True),
-        construire_juge(config, hors_ligne=True),
+    review_id = create_review_project(kili, config.review_project_title)
+    cases, report = process(
+        read_jsonl(arguments.run_path),
+        entries,
+        build_matcher(entries, config, offline=True),
+        build_judge(config, offline=True),
     )
-    creer_cas(
+    create_cases(
         kili,
-        id_revue,
-        cas,
-        calculer_identifiants(cas),
-        {entree.question_id: entree.answers for entree in entrees},
-        {entree.question_id: entree.question for entree in entrees},
-        config.taille_max_metadata,
+        review_id,
+        cases,
+        compute_external_ids(cases),
+        {entry.question_id: entry.answers for entry in entries},
+        {entry.question_id: entry.question for entry in entries},
+        config.max_metadata_size,
     )
 
-    logger.info("Décisions d'appariement : {}", rapport["decisions"])
-    logger.info("Conformité : {}", rapport["conformite"])
+    logger.info("Décisions d'appariement : {}", report["decisions"])
+    logger.info("Conformité : {}", report["conformite"])
     print("\n=== Démonstration prête ===")
-    print(f"Projet A — référentiel : {id_referentiel}")
-    print(f"  {url_projet(config, id_referentiel)}")
-    print(f"    {len(entrees)} questions déjà validées.")
-    print(f"Projet B — revue prod  : {id_revue}")
-    print(f"  {url_projet(config, id_revue)}")
-    print(f"    {len(cas)} cas à arbitrer.")
+    print(f"Projet A — référentiel : {reference_id}")
+    print(f"  {project_url(config, reference_id)}")
+    print(f"    {len(entries)} questions déjà validées.")
+    print(f"Projet B — revue prod  : {review_id}")
+    print(f"  {project_url(config, review_id)}")
+    print(f"    {len(cases)} cas à arbitrer.")
     print(
-        "\nÀ regarder : le rendu rich text des cartes, les libellés des "
-        "jobs,\net le fait que le verdict du juge n'apparaît nulle part "
-        "à l'écran."
+        "\nÀ regarder : le rendu rich text des cartes, les repères a1, a2… "
+        "en tête\nde chaque formulation, les libellés des jobs, et le fait "
+        "que le verdict\ndu juge n'apparaît nulle part à l'écran."
     )
 
 
-def nettoyer(arguments: argparse.Namespace, config: Parametres) -> None:
-    """Nettoie un projet de démonstration.
+def teardown(arguments: argparse.Namespace, config: Settings) -> None:
+    """Clean up a demonstration project.
 
-    Supprime les assets, puis archive le projet. La suppression définitive
-    du projet est asynchrone et irréversible : elle reste derrière
+    Deletes the assets, then archives the project. Permanent deletion of
+    the project is asynchronous and irreversible: it stays behind
     `--supprimer-projet`.
 
     Args:
-        arguments: Arguments de la ligne de commande.
-        config: Paramètres d'exécution.
+        arguments: Command line arguments.
+        config: Runtime settings.
     """
-    kili = creer_client(config)
+    kili = create_client(config)
     assets = kili.assets(
         project_id=arguments.project_id, fields=["externalId"]
     )
@@ -130,7 +120,7 @@ def nettoyer(arguments: argparse.Namespace, config: Parametres) -> None:
             project_id=arguments.project_id, external_ids=external_ids
         )
         logger.info("{} assets supprimés.", len(external_ids))
-    if arguments.supprimer_projet:
+    if arguments.delete_project:
         kili.delete_project(arguments.project_id)
         logger.info("Projet {} supprimé.", arguments.project_id)
     else:
@@ -139,45 +129,57 @@ def nettoyer(arguments: argparse.Namespace, config: Parametres) -> None:
 
 
 def main() -> None:
-    """Point d'entrée de la démonstration."""
-    analyseur = argparse.ArgumentParser(description=__doc__)
-    analyseur.add_argument(
-        "--create", action="store_true", help="Monte la démonstration."
+    """Entry point of the demonstration."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--create",
+        dest="create",
+        action="store_true",
+        help="Monte la démonstration.",
     )
-    analyseur.add_argument(
-        "--teardown", action="store_true", help="Nettoie un projet."
+    parser.add_argument(
+        "--teardown",
+        dest="teardown",
+        action="store_true",
+        help="Nettoie un projet.",
     )
-    analyseur.add_argument(
-        "--project-id", default=None, help="Projet à nettoyer."
+    parser.add_argument(
+        "--project-id",
+        dest="project_id",
+        default=None,
+        help="Projet à nettoyer.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--supprimer-projet",
+        dest="delete_project",
         action="store_true",
         help="Supprime le projet au lieu de l'archiver (irréversible).",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--referentiel",
+        dest="reference_path",
         type=Path,
         default=Path("data/samples/referentiel_initial.jsonl"),
         help="JSONL d'amorçage du référentiel.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--run",
+        dest="run_path",
         type=Path,
         default=Path("data/samples/run_prod.jsonl"),
         help="JSONL des occurrences de production.",
     )
-    arguments = analyseur.parse_args()
-    config = parametres()
+    arguments = parser.parse_args()
+    config = settings()
 
     if arguments.create:
-        creer(arguments, config)
+        create_demo(arguments, config)
     elif arguments.teardown:
         if not arguments.project_id:
-            analyseur.error("--teardown exige --project-id.")
-        nettoyer(arguments, config)
+            parser.error("--teardown exige --project-id.")
+        teardown(arguments, config)
     else:
-        analyseur.error("Choisir --create ou --teardown.")
+        parser.error("Choisir --create ou --teardown.")
 
 
 if __name__ == "__main__":

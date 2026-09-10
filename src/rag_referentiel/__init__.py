@@ -1,4 +1,4 @@
-"""Référentiel de questions-réponses pour le monitoring d'un RAG métier."""
+"""Question-answer reference repository for monitoring a business RAG."""
 
 __all__ = ["__version__"]
 

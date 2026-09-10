@@ -1,50 +1,50 @@
 import pytest
 
 from rag_referentiel.normalisation import (
-    calculer_external_id_revue,
-    calculer_question_id,
-    normaliser_question,
-    tokeniser,
+    compute_question_id,
+    compute_review_external_id,
+    normalize_question,
+    tokenize,
 )
 
 
-def test_normalisation_supprime_accents_casse_et_ponctuation():
-    assert normaliser_question("Quel DÉLAI, déjà ?") == "quel delai deja"
+def test_normalization_strips_accents_case_and_punctuation():
+    assert normalize_question("Quel DÉLAI, déjà ?") == "quel delai deja"
 
 
-def test_normalisation_reduit_les_espaces():
-    assert normaliser_question("  a\t b\n\nc  ") == "a b c"
+def test_normalization_collapses_whitespace():
+    assert normalize_question("  a\t b\n\nc  ") == "a b c"
 
 
-def test_normalisation_question_vide():
-    assert normaliser_question("  ?? !! ") == ""
+def test_normalization_of_an_empty_question():
+    assert normalize_question("  ?? !! ") == ""
 
 
-def test_question_id_stable_entre_formulations_equivalentes():
-    gauche = calculer_question_id("Quel est le délai ?")
-    droite = calculer_question_id("quel est le delai")
-    assert gauche == droite
-    assert gauche.startswith("q_")
-    assert len(gauche) == len("q_") + 12
+def test_question_id_is_stable_across_equivalent_wordings():
+    left = compute_question_id("Quel est le délai ?")
+    right = compute_question_id("quel est le delai")
+    assert left == right
+    assert left.startswith("q_")
+    assert len(left) == len("q_") + 12
 
 
-def test_question_id_differe_entre_questions_differentes():
-    assert calculer_question_id("délai auto") != calculer_question_id(
+def test_question_id_differs_between_different_questions():
+    assert compute_question_id("délai auto") != compute_question_id(
         "délai habitation"
     )
 
 
-def test_question_id_refuse_une_question_vide():
+def test_question_id_rejects_an_empty_question():
     with pytest.raises(ValueError, match="vide"):
-        calculer_question_id("   ...   ")
+        compute_question_id("   ...   ")
 
 
-def test_external_id_revue():
+def test_review_external_id():
     assert (
-        calculer_external_id_revue("q_abc", "run_42") == "q_abc__run_42"
+        compute_review_external_id("q_abc", "run_42") == "q_abc__run_42"
     )
 
 
-def test_tokeniser():
-    assert tokeniser("Délai, déjà !") == ["delai", "deja"]
-    assert tokeniser("  ") == []
+def test_tokenize():
+    assert tokenize("Délai, déjà !") == ["delai", "deja"]
+    assert tokenize("  ") == []

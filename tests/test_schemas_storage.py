@@ -3,22 +3,22 @@ from pydantic import ValidationError
 
 from rag_referentiel.schemas import (
     Answer,
-    CasRevue,
-    EntreeReferentiel,
+    ReferenceEntry,
+    ReviewCase,
     Source,
     Verdict,
 )
 from rag_referentiel.storage import (
-    alleger_metadata,
-    ecrire_avec_repli,
-    est_erreur_de_volume,
-    preparer_charge,
-    taille_metadata,
+    is_size_error,
+    metadata_size,
+    prepare_payload,
+    shrink_metadata,
+    write_with_fallback,
 )
 
 
-def entree():
-    return EntreeReferentiel(
+def entry():
+    return ReferenceEntry(
         question_id="q_abc",
         question="Quel est le délai ?",
         answers=[
@@ -34,15 +34,13 @@ def entree():
     )
 
 
-def test_statut_par_defaut_et_valeurs_admises():
-    assert entree().statut == "ACTIF"
+def test_default_status_and_allowed_values():
+    assert entry().statut == "ACTIF"
     with pytest.raises(ValidationError):
-        EntreeReferentiel(
-            question_id="q", question="?", statut="INCONNU"
-        )
+        ReferenceEntry(question_id="q", question="?", statut="INCONNU")
 
 
-def test_origine_contrainte():
+def test_origin_is_constrained():
     with pytest.raises(ValidationError):
         Answer(
             id="a1",
@@ -53,21 +51,21 @@ def test_origine_contrainte():
         )
 
 
-def test_source_sans_page():
+def test_source_without_a_page():
     source = Source(doc_id="cg.pdf")
     assert source.page is None
-    assert source.libelle() == "cg.pdf"
-    assert Source(doc_id="cg.pdf", page=3).libelle() == "cg.pdf:3"
+    assert source.label() == "cg.pdf"
+    assert Source(doc_id="cg.pdf", page=3).label() == "cg.pdf:3"
 
 
-def test_verdict_confiance_bornee():
+def test_verdict_confidence_is_bounded():
     with pytest.raises(ValidationError):
         Verdict(conforme=True, confiance=1.5, motif="x")
 
 
-def test_cas_revue_motif_contraint():
+def test_review_case_reason_is_constrained():
     with pytest.raises(ValidationError):
-        CasRevue(
+        ReviewCase(
             question_id="q",
             run_id="r",
             motif="AUTRE",
@@ -76,57 +74,59 @@ def test_cas_revue_motif_contraint():
         )
 
 
-def test_charge_sous_le_seuil_reste_complete():
-    charge = preparer_charge(entree().model_dump(), [{"children": []}], 10**6)
-    assert charge.repli is False
-    assert charge.json_metadata["answers"][0]["text"]
+def test_payload_below_the_threshold_stays_complete():
+    payload = prepare_payload(
+        entry().model_dump(), [{"children": []}], 10**6
+    )
+    assert payload.fallback is False
+    assert payload.json_metadata["answers"][0]["text"]
 
 
-def test_charge_au_dessus_du_seuil_est_allegee():
-    metadata = entree().model_dump()
-    charge = preparer_charge(metadata, [{"children": []}], 200)
-    assert charge.repli is True
-    assert "text" not in charge.json_metadata["answers"][0]
-    assert charge.json_metadata["repli_texte"] is True
-    assert charge.json_metadata["question"] == metadata["question"]
-    assert taille_metadata(charge.json_metadata) < taille_metadata(metadata)
+def test_payload_above_the_threshold_is_shrunk():
+    metadata = entry().model_dump()
+    payload = prepare_payload(metadata, [{"children": []}], 200)
+    assert payload.fallback is True
+    assert "text" not in payload.json_metadata["answers"][0]
+    assert payload.json_metadata["repli_texte"] is True
+    assert payload.json_metadata["question"] == metadata["question"]
+    assert metadata_size(payload.json_metadata) < metadata_size(metadata)
 
 
-def test_alleger_retire_la_reponse_candidate():
-    allegee = alleger_metadata(
+def test_shrinking_drops_the_candidate_answer():
+    shrunk = shrink_metadata(
         {"question_id": "q", "candidate_answer": "x" * 100}
     )
-    assert "candidate_answer" not in allegee
-    assert allegee["repli_texte"] is True
+    assert "candidate_answer" not in shrunk
+    assert shrunk["repli_texte"] is True
 
 
-def test_est_erreur_de_volume():
-    assert est_erreur_de_volume(RuntimeError("Payload too large"))
-    assert not est_erreur_de_volume(RuntimeError("Not found"))
+def test_size_error_detection():
+    assert is_size_error(RuntimeError("Payload too large"))
+    assert not is_size_error(RuntimeError("Not found"))
 
 
-def test_ecriture_rejouee_avec_metadata_allegee():
-    tentatives = []
+def test_write_is_replayed_with_shrunk_metadata():
+    attempts = []
 
-    def ecriture(charge):
-        tentatives.append(charge)
-        if not charge.repli:
+    def write(payload):
+        attempts.append(payload)
+        if not payload.fallback:
             raise RuntimeError("request entity too large")
         return "écrit"
 
-    resultat = ecrire_avec_repli(
-        ecriture, entree().model_dump(), [{"children": []}], 10**6
+    result = write_with_fallback(
+        write, entry().model_dump(), [{"children": []}], 10**6
     )
-    assert resultat == "écrit"
-    assert [t.repli for t in tentatives] == [False, True]
+    assert result == "écrit"
+    assert [a.fallback for a in attempts] == [False, True]
 
 
-def test_erreur_sans_rapport_avec_le_volume_est_propagee():
-    def ecriture(charge):
-        del charge
+def test_an_error_unrelated_to_size_is_propagated():
+    def write(payload):
+        del payload
         raise RuntimeError("authentication failed")
 
     with pytest.raises(RuntimeError, match="authentication"):
-        ecrire_avec_repli(
-            ecriture, entree().model_dump(), [{"children": []}], 10**6
+        write_with_fallback(
+            write, entry().model_dump(), [{"children": []}], 10**6
         )

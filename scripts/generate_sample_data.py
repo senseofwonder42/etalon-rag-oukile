@@ -1,9 +1,9 @@
-"""Génère les jeux de données factices de `data/samples/`.
+"""Generate the fake datasets of `data/samples/`.
 
-Aucune donnée réelle, aucun nom de personne existant. Les occurrences de
-production mélangent volontairement des questions identiques à
-l'existant, des reformulations, des questions inédites, et des réponses
-correctes, presque correctes ou fausses.
+No real data, no name of an existing person. Production occurrences
+deliberately mix questions identical to the existing ones, rephrasings,
+brand new questions, and answers that are correct, nearly correct or
+plain wrong.
 """
 
 import argparse
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from loguru import logger
 
-DOSSIER_DEFAUT = Path("data/samples")
+DEFAULT_DIRECTORY = Path("data/samples")
 
 CG_AUTO = "cg_auto_2024.pdf"
 CG_HAB = "cg_habitation_2024.pdf"
@@ -28,14 +28,14 @@ VERSIONS = {
 
 
 def _source(doc_id: str, page: int) -> dict:
-    """Construit une source factice.
+    """Build a fake source.
 
     Args:
-        doc_id: Nom du document.
-        page: Numéro de page.
+        doc_id: Document name.
+        page: Page number.
 
     Returns:
-        La source, avec la version courante du document.
+        The source, carrying the current version of the document.
     """
     return {
         "doc_id": doc_id,
@@ -44,7 +44,7 @@ def _source(doc_id: str, page: int) -> dict:
     }
 
 
-REFERENTIEL = [
+REFERENCE_ENTRIES = [
     {
         "question": (
             "Quel est le délai de déclaration d'un sinistre auto ?"
@@ -189,7 +189,7 @@ REFERENTIEL = [
 ]
 
 
-RUN_PROD = [
+PRODUCTION_RUN = [
     # --- Question identique, réponse conforme ---------------------------
     {
         "run_id": "run_101",
@@ -361,34 +361,35 @@ RUN_PROD = [
 ]
 
 
-def ecrire_jsonl(chemin: Path, lignes: list[dict]) -> None:
-    """Écrit des enregistrements au format JSONL.
+def write_jsonl(path: Path, records: list[dict]) -> None:
+    """Write records in JSONL format.
 
     Args:
-        chemin: Fichier de destination.
-        lignes: Enregistrements à écrire.
+        path: Destination file.
+        records: Records to write.
     """
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    with chemin.open("w", encoding="utf-8") as fichier:
-        for ligne in lignes:
-            fichier.write(json.dumps(ligne, ensure_ascii=False) + "\n")
-    logger.info("{} lignes écrites dans {}", len(lignes), chemin)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    logger.info("{} lignes écrites dans {}", len(records), path)
 
 
 def main() -> None:
-    """Point d'entrée du générateur."""
-    analyseur = argparse.ArgumentParser(description=__doc__)
-    analyseur.add_argument(
+    """Entry point of the generator."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
         "--dossier",
+        dest="directory",
         type=Path,
-        default=DOSSIER_DEFAUT,
+        default=DEFAULT_DIRECTORY,
         help="Dossier de destination des fichiers JSONL.",
     )
-    arguments = analyseur.parse_args()
-    ecrire_jsonl(
-        arguments.dossier / "referentiel_initial.jsonl", REFERENTIEL
+    arguments = parser.parse_args()
+    write_jsonl(
+        arguments.directory / "referentiel_initial.jsonl", REFERENCE_ENTRIES
     )
-    ecrire_jsonl(arguments.dossier / "run_prod.jsonl", RUN_PROD)
+    write_jsonl(arguments.directory / "run_prod.jsonl", PRODUCTION_RUN)
 
 
 if __name__ == "__main__":

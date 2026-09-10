@@ -1,26 +1,26 @@
 from rag_referentiel.rendering import (
-    rendu_asset_referentiel,
-    rendu_asset_revue,
+    render_reference_asset,
+    render_review_asset,
 )
 from rag_referentiel.schemas import (
     Answer,
-    CasRevue,
-    EntreeReferentiel,
+    ReferenceEntry,
+    ReviewCase,
     Source,
     Verdict,
 )
 
 
-def noeuds(document):
-    pile = list(document)
-    while pile:
-        noeud = pile.pop()
-        yield noeud
-        pile.extend(noeud.get("children", []))
+def nodes(document):
+    stack = list(document)
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(node.get("children", []))
 
 
-def entree():
-    return EntreeReferentiel(
+def entry():
+    return ReferenceEntry(
         question_id="q_abc",
         question="Quel est le délai ?",
         version=3,
@@ -37,11 +37,11 @@ def entree():
     )
 
 
-def cas(motif="DIVERGENCE"):
-    return CasRevue(
+def case(reason="DIVERGENCE"):
+    return ReviewCase(
         question_id="q_abc",
         run_id="run_42",
-        motif=motif,
+        motif=reason,
         question="Quel est le délai ?",
         candidate_answer="Vous disposez de **5 jours ouvrés**.",
         sources=[Source(doc_id="cg_auto.pdf", page=12)],
@@ -52,55 +52,59 @@ def cas(motif="DIVERGENCE"):
     )
 
 
-def test_rendu_referentiel_structure():
-    document = rendu_asset_referentiel(entree())
-    types = [n.get("type") for n in noeuds(document) if "type" in n]
-    assert "h1" in types
-    assert "table" in types
-    contenu = " ".join(n["text"] for n in noeuds(document) if "text" in n)
-    assert "Quel est le délai ?" in contenu
-    assert "c.durand" in contenu
+def test_reference_card_structure():
+    document = render_reference_asset(entry())
+    kinds = [n.get("type") for n in nodes(document) if "type" in n]
+    assert "h1" in kinds
+    assert "table" in kinds
+    content = " ".join(n["text"] for n in nodes(document) if "text" in n)
+    assert "Quel est le délai ?" in content
+    assert "c.durand" in content
 
 
-def test_rendu_revue_n_affiche_jamais_le_verdict_du_juge():
-    document = rendu_asset_revue(cas(), [entree().answers[0]])
-    contenu = " ".join(n["text"] for n in noeuds(document) if "text" in n)
-    assert "chiffre divergent" not in contenu
-    assert "0.31" not in contenu
-    assert "conforme" not in contenu.lower()
+def test_answer_markers_are_shown_on_the_card():
+    document = render_reference_asset(entry())
+    content = " ".join(n["text"] for n in nodes(document) if "text" in n)
+    assert "a1 · origine : metier" in content
 
 
-def test_rendu_revue_colore_les_reponses():
-    document = rendu_asset_revue(cas(), [entree().answers[0]])
-    fonds = {
+def test_review_card_never_shows_the_judge_verdict():
+    document = render_review_asset(case(), [entry().answers[0]])
+    content = " ".join(n["text"] for n in nodes(document) if "text" in n)
+    assert "chiffre divergent" not in content
+    assert "0.31" not in content
+    assert "conforme" not in content.lower()
+
+
+def test_review_card_colours_the_answers():
+    document = render_review_asset(case(), [entry().answers[0]])
+    backgrounds = {
         n["backgroundColor"]
-        for n in noeuds(document)
+        for n in nodes(document)
         if "backgroundColor" in n
     }
-    assert "#e8f5e9" in fonds
-    assert "#fff3e0" in fonds
+    assert "#e8f5e9" in backgrounds
+    assert "#fff3e0" in backgrounds
 
 
-def test_rendu_revue_affiche_la_question_candidate_si_incertain():
-    document = rendu_asset_revue(
-        cas("APPARIEMENT_INCERTAIN"),
+def test_review_card_shows_the_candidate_question_when_uncertain():
+    document = render_review_asset(
+        case("APPARIEMENT_INCERTAIN"),
         [],
-        question_candidate="Une autre question ?",
+        candidate_question="Une autre question ?",
     )
-    contenu = " ".join(n["text"] for n in noeuds(document) if "text" in n)
-    assert "Une autre question ?" in contenu
+    content = " ".join(n["text"] for n in nodes(document) if "text" in n)
+    assert "Une autre question ?" in content
 
 
-def test_identifiants_uniques_dans_chaque_rendu():
+def test_identifiers_are_unique_in_each_rendering():
     for document in (
-        rendu_asset_referentiel(entree()),
-        rendu_asset_revue(cas(), [entree().answers[0]]),
+        render_reference_asset(entry()),
+        render_review_asset(case(), [entry().answers[0]]),
     ):
-        identifiants = [n["id"] for n in noeuds(document) if "id" in n]
-        assert len(identifiants) == len(set(identifiants))
+        identifiers = [n["id"] for n in nodes(document) if "id" in n]
+        assert len(identifiers) == len(set(identifiers))
 
 
-def test_rendu_deterministe():
-    assert rendu_asset_referentiel(entree()) == rendu_asset_referentiel(
-        entree()
-    )
+def test_rendering_is_deterministic():
+    assert render_reference_asset(entry()) == render_reference_asset(entry())

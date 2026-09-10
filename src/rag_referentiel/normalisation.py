@@ -1,83 +1,80 @@
-"""Normalisation des questions et calcul de leur identifiant stable.
+"""Question normalization and stable identifier computation.
 
-La normalisation est volontairement une fonction pure, sans dépendance :
-c'est elle qui garantit qu'une même question posée deux fois retombe sur
-le même `question_id`, et donc sur le même asset Kili.
+Normalization is deliberately a pure, dependency-free function: it is what
+guarantees that the same question asked twice maps to the same
+`question_id`, and therefore to the same Kili asset.
 """
 
 import hashlib
 import re
 import unicodedata
 
-_PONCTUATION = re.compile(r"[^\w\s]", flags=re.UNICODE)
-_ESPACES = re.compile(r"\s+")
+_PUNCTUATION = re.compile(r"[^\w\s]", flags=re.UNICODE)
+_WHITESPACE = re.compile(r"\s+")
 
-LONGUEUR_HACHE = 12
+HASH_LENGTH = 12
 
 
-def normaliser_question(question: str) -> str:
-    """Normalise une question pour la comparaison et le hachage.
+def normalize_question(question: str) -> str:
+    """Normalize a question for comparison and hashing.
 
-    Les traitements appliqués, dans l'ordre : suppression des accents,
-    passage en minuscules, suppression de la ponctuation, réduction des
-    espaces multiples et suppression des espaces de bord.
+    Steps applied, in order: accent removal, lowercasing, punctuation
+    removal, whitespace collapsing and trimming.
 
     Args:
-        question: Question brute, telle que posée à la RAG.
+        question: Raw question, as asked to the RAG.
 
     Returns:
-        La question normalisée. Chaîne vide si la question ne contient
-        aucun caractère significatif.
+        The normalized question. Empty string when the question holds no
+        significant character.
     """
-    sans_accent = unicodedata.normalize("NFKD", question)
-    sans_accent = "".join(
-        c for c in sans_accent if not unicodedata.combining(c)
-    )
-    minuscules = sans_accent.lower()
-    sans_ponctuation = _PONCTUATION.sub(" ", minuscules)
-    return _ESPACES.sub(" ", sans_ponctuation).strip()
+    stripped = unicodedata.normalize("NFKD", question)
+    stripped = "".join(c for c in stripped if not unicodedata.combining(c))
+    lowered = stripped.lower()
+    without_punctuation = _PUNCTUATION.sub(" ", lowered)
+    return _WHITESPACE.sub(" ", without_punctuation).strip()
 
 
-def calculer_question_id(question: str) -> str:
-    """Calcule l'identifiant d'une question du référentiel.
+def compute_question_id(question: str) -> str:
+    """Compute the identifier of a reference entry.
 
     Args:
-        question: Question brute ou déjà normalisée.
+        question: Raw or already normalized question.
 
     Returns:
-        Identifiant de la forme `q_<12 caractères hexadécimaux>`.
+        An identifier shaped as `q_<12 hexadecimal characters>`.
 
     Raises:
-        ValueError: Si la question est vide une fois normalisée.
+        ValueError: If the question is empty once normalized.
     """
-    normalisee = normaliser_question(question)
-    if not normalisee:
+    normalized = normalize_question(question)
+    if not normalized:
         raise ValueError("Question vide après normalisation.")
-    empreinte = hashlib.sha1(normalisee.encode("utf-8")).hexdigest()
-    return f"q_{empreinte[:LONGUEUR_HACHE]}"
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+    return f"q_{digest[:HASH_LENGTH]}"
 
 
-def calculer_external_id_revue(question_id: str, run_id: str) -> str:
-    """Calcule l'external_id d'un cas de revue du projet B.
+def compute_review_external_id(question_id: str, run_id: str) -> str:
+    """Compute the external id of a review case in project B.
 
     Args:
-        question_id: Identifiant de la question (référentiel ou candidat).
-        run_id: Identifiant de l'occurrence de production.
+        question_id: Question identifier (reference or candidate).
+        run_id: Identifier of the production occurrence.
 
     Returns:
-        Identifiant de la forme `<question_id>__<run_id>`.
+        An identifier shaped as `<question_id>__<run_id>`.
     """
     return f"{question_id}__{run_id}"
 
 
-def tokeniser(texte: str) -> list[str]:
-    """Découpe un texte normalisé en jetons.
+def tokenize(text: str) -> list[str]:
+    """Split a text into normalized tokens.
 
     Args:
-        texte: Texte brut ou normalisé.
+        text: Raw or normalized text.
 
     Returns:
-        La liste des jetons du texte normalisé.
+        The tokens of the normalized text.
     """
-    normalise = normaliser_question(texte)
-    return normalise.split() if normalise else []
+    normalized = normalize_question(text)
+    return normalized.split() if normalized else []

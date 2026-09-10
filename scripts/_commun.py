@@ -1,64 +1,61 @@
-"""Utilitaires partagés par les scripts en ligne de commande."""
+"""Helpers shared by the command line scripts."""
 
 import json
 from pathlib import Path
 
 from loguru import logger
 
-from rag_referentiel.config import Parametres, charger_parametres
+from rag_referentiel.config import Settings, load_settings
 
 
-def lire_jsonl(chemin: Path) -> list[dict]:
-    """Lit un fichier JSONL en ignorant les lignes illisibles.
+def read_jsonl(path: Path) -> list[dict]:
+    """Read a JSONL file, skipping unreadable lines.
 
     Args:
-        chemin: Fichier à lire.
+        path: File to read.
 
     Returns:
-        Les enregistrements lus.
+        The parsed records.
 
     Raises:
-        FileNotFoundError: Si le fichier n'existe pas.
+        FileNotFoundError: If the file does not exist.
     """
-    if not chemin.exists():
-        raise FileNotFoundError(f"Fichier introuvable : {chemin}")
-    enregistrements = []
-    for numero, ligne in enumerate(
-        chemin.read_text(encoding="utf-8").splitlines(), start=1
+    if not path.exists():
+        raise FileNotFoundError(f"Fichier introuvable : {path}")
+    records = []
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
     ):
-        if not ligne.strip():
+        if not line.strip():
             continue
         try:
-            enregistrements.append(json.loads(ligne))
-        except json.JSONDecodeError as erreur:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as error:
             logger.warning(
-                "Ligne {} de {} illisible, ignorée : {}",
-                numero,
-                chemin,
-                erreur,
+                "Ligne {} de {} illisible, ignorée : {}", number, path, error
             )
-    return enregistrements
+    return records
 
 
-def ecrire_json(chemin: Path, contenu: dict) -> None:
-    """Écrit un rapport JSON lisible.
+def write_json(path: Path, content: dict) -> None:
+    """Write a readable JSON report.
 
     Args:
-        chemin: Fichier de destination.
-        contenu: Contenu du rapport.
+        path: Destination file.
+        content: Content of the report.
     """
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    chemin.write_text(
-        json.dumps(contenu, ensure_ascii=False, indent=2) + "\n",
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(content, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    logger.info("Rapport écrit : {}", chemin)
+    logger.info("Rapport écrit : {}", path)
 
 
-def parametres() -> Parametres:
-    """Charge les paramètres d'exécution.
+def settings() -> Settings:
+    """Load the runtime settings.
 
     Returns:
-        Les paramètres validés.
+        The validated settings.
     """
-    return charger_parametres()
+    return load_settings()

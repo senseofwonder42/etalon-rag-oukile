@@ -1,18 +1,18 @@
-"""Briques de base du format rich text des assets TEXT de Kili.
+"""Building blocks of the rich text format of Kili TEXT assets.
 
-Un asset rich text est un arbre de nœuds :
+A rich text asset is a tree of nodes:
 
-- un **nœud élément** porte `children` et un `type` parmi
-  `ELEMENTS_AUTORISES` ;
-- un **nœud texte** porte `text` et un `id` unique dans tout le document,
-  éventuellement assorti de marques (`bold`, `italic`, `code`,
+- an **element node** carries `children` and a `type` taken from
+  `ALLOWED_ELEMENTS`;
+- a **text node** carries `text` and an `id` that must be unique across
+  the whole document, optionally with marks (`bold`, `italic`, `code`,
   `underline`).
 
-Les deux acceptent des styles CSS (`backgroundColor`, `color`, `padding`…).
-Le SDK ne valide rien : il sérialise l'arbre et le téléverse.
+Both accept CSS styles (`backgroundColor`, `color`, `padding`, …). The
+SDK validates nothing: it serializes the tree and uploads it.
 """
 
-ELEMENTS_AUTORISES = frozenset(
+ALLOWED_ELEMENTS = frozenset(
     {
         "blockquote",
         "h1",
@@ -31,107 +31,108 @@ ELEMENTS_AUTORISES = frozenset(
     }
 )
 
-MARQUES_AUTORISEES = frozenset({"bold", "italic", "code", "underline"})
+ALLOWED_MARKS = frozenset({"bold", "italic", "code", "underline"})
 
 
-class GenerateurIds:
-    """Générateur déterministe d'identifiants de nœuds texte.
+class IdGenerator:
+    """Deterministic generator of text node identifiers.
 
-    Un même générateur doit être utilisé pour tout un document : les `id`
-    des nœuds texte doivent y être uniques. Le compteur étant déterministe,
-    deux rendus des mêmes données produisent exactement le même arbre, ce
-    qui permet de les comparer dans les tests.
+    A single generator must be used for a whole document: text node ids
+    have to be unique within it. The counter being deterministic, two
+    renderings of the same data produce exactly the same tree, which is
+    what lets the tests compare outputs.
     """
 
-    def __init__(self, prefixe: str = "n") -> None:
-        """Initialise le générateur.
+    def __init__(self, prefix: str = "n") -> None:
+        """Initialize the generator.
 
         Args:
-            prefixe: Préfixe des identifiants produits.
+            prefix: Prefix of the produced identifiers.
         """
-        self._prefixe = prefixe
-        self._compteur = 0
+        self._prefix = prefix
+        self._counter = 0
 
-    def suivant(self) -> str:
-        """Produit l'identifiant suivant.
+    def next_id(self) -> str:
+        """Produce the next identifier.
 
         Returns:
-            Un identifiant de la forme `n1`, `n2`, …
+            An identifier shaped as `n1`, `n2`, …
         """
-        self._compteur += 1
-        return f"{self._prefixe}{self._compteur}"
+        self._counter += 1
+        return f"{self._prefix}{self._counter}"
 
 
-def noeud_texte(
-    texte: str,
-    generateur: GenerateurIds,
-    marques: frozenset[str] | set[str] | None = None,
+def text_node(
+    text: str,
+    generator: IdGenerator,
+    marks: frozenset[str] | set[str] | None = None,
     styles: dict[str, str] | None = None,
 ) -> dict:
-    """Construit un nœud texte.
+    """Build a text node.
 
     Args:
-        texte: Contenu textuel du nœud.
-        generateur: Générateur d'identifiants du document courant.
-        marques: Marques à appliquer, parmi `MARQUES_AUTORISEES`.
-        styles: Styles CSS supplémentaires.
+        text: Textual content of the node.
+        generator: Id generator of the current document.
+        marks: Marks to apply, taken from `ALLOWED_MARKS`.
+        styles: Extra CSS styles.
 
     Returns:
-        Le nœud texte, prêt à être sérialisé.
+        The text node, ready to be serialized.
 
     Raises:
-        ValueError: Si une marque inconnue est demandée.
+        ValueError: If an unknown mark is requested.
     """
-    noeud: dict = {"id": generateur.suivant(), "text": texte}
-    for marque in sorted(marques or ()):
-        if marque not in MARQUES_AUTORISEES:
-            raise ValueError(f"Marque inconnue : {marque}")
-        noeud[marque] = True
-    noeud.update(styles or {})
-    return noeud
+    node: dict = {"id": generator.next_id(), "text": text}
+    for mark in sorted(marks or ()):
+        if mark not in ALLOWED_MARKS:
+            raise ValueError(f"Marque inconnue : {mark}")
+        node[mark] = True
+    node.update(styles or {})
+    return node
 
 
-def noeud_element(
-    type_: str,
-    enfants: list[dict],
-    generateur: GenerateurIds,
+def element_node(
+    element_type: str,
+    children: list[dict],
+    generator: IdGenerator,
     styles: dict[str, str] | None = None,
 ) -> dict:
-    """Construit un nœud élément.
+    """Build an element node.
 
     Args:
-        type_: Type de l'élément, parmi `ELEMENTS_AUTORISES`.
-        enfants: Nœuds enfants ; un nœud texte vide est ajouté si la liste
-            est vide, un élément sans enfant n'ayant rien à rendre.
-        generateur: Générateur d'identifiants du document courant.
-        styles: Styles CSS supplémentaires.
+        element_type: Element type, taken from `ALLOWED_ELEMENTS`.
+        children: Child nodes; an empty text node is appended when the
+            list is empty, an element without children having nothing to
+            render.
+        generator: Id generator of the current document.
+        styles: Extra CSS styles.
 
     Returns:
-        Le nœud élément, prêt à être sérialisé.
+        The element node, ready to be serialized.
 
     Raises:
-        ValueError: Si le type d'élément n'est pas supporté par Kili.
+        ValueError: If the element type is not supported by Kili.
     """
-    if type_ not in ELEMENTS_AUTORISES:
-        raise ValueError(f"Type d'élément inconnu : {type_}")
-    contenu = enfants or [noeud_texte("", generateur)]
-    noeud: dict = {"type": type_, "children": contenu}
-    noeud.update(styles or {})
-    return noeud
+    if element_type not in ALLOWED_ELEMENTS:
+        raise ValueError(f"Type d'élément inconnu : {element_type}")
+    content = children or [text_node("", generator)]
+    node: dict = {"type": element_type, "children": content}
+    node.update(styles or {})
+    return node
 
 
 def document(
-    enfants: list[dict], styles: dict[str, str] | None = None
+    children: list[dict], styles: dict[str, str] | None = None
 ) -> list[dict]:
-    """Enveloppe des nœuds de bloc dans la racine d'un document rich text.
+    """Wrap block nodes into the root of a rich text document.
 
     Args:
-        enfants: Nœuds de premier niveau du document.
-        styles: Styles CSS appliqués à la racine.
+        children: Top level nodes of the document.
+        styles: CSS styles applied to the root.
 
     Returns:
-        Le `json_content` complet, tel qu'attendu par Kili.
+        The complete `json_content`, as expected by Kili.
     """
-    racine: dict = {"children": enfants}
-    racine.update(styles or {})
-    return [racine]
+    root: dict = {"children": children}
+    root.update(styles or {})
+    return [root]

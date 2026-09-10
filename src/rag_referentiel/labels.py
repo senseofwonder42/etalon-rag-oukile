@@ -1,123 +1,120 @@
-"""Lecture des labels et des metadata renvoyés par le SDK Kili."""
+"""Reading of the labels and metadata returned by the Kili SDK."""
 
 import json
 
 from loguru import logger
 
 
-def charger_metadata(brut: object) -> dict:
-    """Décode une `jsonMetadata` renvoyée par Kili.
+def load_metadata(raw: object) -> dict:
+    """Decode a `jsonMetadata` value returned by Kili.
 
     Args:
-        brut: Valeur renvoyée par le SDK (dictionnaire ou chaîne JSON).
+        raw: Value returned by the SDK (dictionary or JSON string).
 
     Returns:
-        La metadata décodée ; un dictionnaire vide si elle est illisible.
+        The decoded metadata; an empty dictionary when unreadable.
     """
-    if isinstance(brut, dict):
-        return brut
-    if isinstance(brut, str) and brut.strip():
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
         try:
-            return json.loads(brut)
+            return json.loads(raw)
         except json.JSONDecodeError:
             logger.warning("Metadata JSON illisible, ignorée.")
     return {}
 
 
-def categorie(reponse: dict, job: str) -> str | None:
-    """Lit la catégorie choisie pour un job de classification.
+def category(response: dict, job: str) -> str | None:
+    """Read the category picked for a single-choice classification job.
 
     Args:
-        reponse: `jsonResponse` du label.
-        job: Nom du job.
+        response: `jsonResponse` of the label.
+        job: Job name.
 
     Returns:
-        Le code de la catégorie, ou `None` si le job n'a pas été rempli.
+        The category code, or `None` when the job was left empty.
     """
-    categories = (reponse.get(job) or {}).get("categories") or []
-    if not categories:
+    picked = (response.get(job) or {}).get("categories") or []
+    if not picked:
         return None
-    return categories[0].get("name")
+    return picked[0].get("name")
 
 
-def categories(reponse: dict, job: str) -> list[str]:
-    """Lit les catégories cochées pour un job à choix multiple.
+def categories(response: dict, job: str) -> list[str]:
+    """Read the categories ticked for a multiple-choice job.
 
     Args:
-        reponse: `jsonResponse` du label.
-        job: Nom du job.
+        response: `jsonResponse` of the label.
+        job: Job name.
 
     Returns:
-        Les codes des catégories cochées, éventuellement vide.
+        The ticked category codes, possibly empty.
     """
-    cochees = (reponse.get(job) or {}).get("categories") or []
+    ticked = (response.get(job) or {}).get("categories") or []
     return [
         item["name"]
-        for item in cochees
+        for item in ticked
         if isinstance(item, dict) and item.get("name")
     ]
 
 
-def transcription(reponse: dict, job: str) -> str | None:
-    """Lit le texte saisi pour un job de transcription.
+def transcription(response: dict, job: str) -> str | None:
+    """Read the text typed for a transcription job.
 
     Args:
-        reponse: `jsonResponse` du label.
-        job: Nom du job.
+        response: `jsonResponse` of the label.
+        job: Job name.
 
     Returns:
-        Le texte saisi, ou `None` si le job est vide.
+        The typed text, or `None` when the job is empty.
     """
-    texte = (reponse.get(job) or {}).get("text")
-    if isinstance(texte, str) and texte.strip():
-        return texte.strip()
+    text = (response.get(job) or {}).get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
     return None
 
 
-def labels_humains(labels: list[dict]) -> list[dict]:
-    """Retient les labels humains d'un asset, du plus ancien au plus récent.
+def human_labels(labels: list[dict]) -> list[dict]:
+    """Keep the human labels of an asset, oldest first.
 
-    Les labels de prédiction et d'inférence sont écartés : le type
-    `INFERENCE` est celui de la piste d'audit écrite par les scripts, qui
-    ne doit jamais être relue comme un arbitrage.
+    Prediction and inference labels are dropped: `INFERENCE` is the type
+    of the audit trail written by the scripts, which must never be read
+    back as an arbitration.
 
     Args:
-        labels: Labels renvoyés par Kili.
+        labels: Labels returned by Kili.
 
     Returns:
-        Les labels humains, triés par date de création croissante.
+        The human labels, sorted by ascending creation date.
     """
-    humains = [
+    humans = [
         label
         for label in labels
         if label.get("labelType") in {"DEFAULT", "REVIEW", None}
     ]
-    return sorted(humains, key=lambda item: item.get("createdAt") or "")
+    return sorted(humans, key=lambda item: item.get("createdAt") or "")
 
 
-def dernier_label(labels: list[dict]) -> dict | None:
-    """Retient le label humain le plus récent d'un asset.
-
-    Les labels de prédiction et d'inférence sont écartés : seuls les
-    arbitrages humains comptent.
+def latest_label(labels: list[dict]) -> dict | None:
+    """Keep the most recent human label of an asset.
 
     Args:
-        labels: Labels renvoyés par Kili.
+        labels: Labels returned by Kili.
 
     Returns:
-        Le label le plus récent, ou `None` si l'asset n'en porte pas.
+        The most recent label, or `None` when the asset carries none.
     """
-    candidats = labels_humains(labels)
-    return candidats[-1] if candidats else None
+    candidates = human_labels(labels)
+    return candidates[-1] if candidates else None
 
 
-def auteur_de(label: dict) -> str:
-    """Lit l'auteur d'un label.
+def author_of(label: dict) -> str:
+    """Read the author of a label.
 
     Args:
-        label: Label renvoyé par Kili.
+        label: Label returned by Kili.
 
     Returns:
-        L'adresse de l'auteur, ou `inconnu`.
+        The author's address, or `inconnu`.
     """
     return (label.get("author") or {}).get("email") or "inconnu"

@@ -1,9 +1,9 @@
-"""Appariement d'une question de production au référentiel.
+"""Matching of a production question against the reference repository.
 
-En production, deux questions ne sont presque jamais identiques :
-l'appariement combine un score lexical (BM25) et un score sémantique
-(embeddings). Le référentiel étant petit, l'index est reconstruit en
-mémoire à chaque exécution ; il n'y a pas de base vectorielle.
+In production, two questions are almost never identical: matching
+combines a lexical score (BM25) with a semantic score (embeddings). The
+repository being small, the index is rebuilt in memory on every run;
+there is no vector database.
 """
 
 from typing import Literal, Protocol, runtime_checkable
@@ -11,15 +11,15 @@ from typing import Literal, Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 from rank_bm25 import BM25Okapi
 
-from .embeddings import EmbeddingBackend, similarite_cosinus
-from .normalisation import normaliser_question, tokeniser
-from .schemas import EntreeReferentiel
+from .embeddings import EmbeddingBackend, cosine_similarity
+from .normalisation import normalize_question, tokenize
+from .schemas import ReferenceEntry
 
 Decision = Literal["MATCH", "INCERTAIN", "NOUVELLE"]
 
 
 class MatchResult(BaseModel):
-    """Résultat d'un appariement."""
+    """Outcome of a matching attempt."""
 
     decision: Decision
     question_id: str | None = None
@@ -29,234 +29,227 @@ class MatchResult(BaseModel):
 
 @runtime_checkable
 class QuestionMatcher(Protocol):
-    """Apparie une question posée en production au référentiel."""
+    """Matches a production question against the repository."""
 
-    def apparier(self, question: str) -> MatchResult:
-        """Apparie une question.
+    def match(self, question: str) -> MatchResult:
+        """Match a question.
 
         Args:
-            question: Question brute posée à la RAG.
+            question: Raw question asked to the RAG.
 
         Returns:
-            Le résultat de l'appariement.
+            The matching outcome.
         """
         ...
 
 
-def similarite_lexicale(gauche: str, droite: str) -> float:
-    """Mesure le recouvrement de vocabulaire de deux textes.
+def lexical_similarity(left: str, right: str) -> float:
+    """Measure the vocabulary overlap of two texts.
 
-    C'est l'indice de Jaccard sur les jetons normalisés. Cette mesure sert
-    aussi bien à écarter les quasi-doublons de formulation qu'à choisir les
-    variantes les plus diverses.
+    This is the Jaccard index over normalized tokens. It serves both to
+    discard near-duplicate wordings and to pick the most diverse
+    variants.
 
     Args:
-        gauche: Premier texte.
-        droite: Second texte.
+        left: First text.
+        right: Second text.
 
     Returns:
-        Un score dans `[0, 1]` ; `0` si l'un des textes est vide.
+        A score in `[0, 1]`; `0` when either text is empty.
     """
-    jetons_g = set(tokeniser(gauche))
-    jetons_d = set(tokeniser(droite))
-    if not jetons_g or not jetons_d:
+    left_tokens = set(tokenize(left))
+    right_tokens = set(tokenize(right))
+    if not left_tokens or not right_tokens:
         return 0.0
-    return len(jetons_g & jetons_d) / len(jetons_g | jetons_d)
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
 
 
-class _IndexBm25:
-    """Index BM25 des questions normalisées du référentiel."""
+class _Bm25Index:
+    """BM25 index over the normalized questions of the repository."""
 
     def __init__(self, questions: list[str]) -> None:
-        self._corpus = [tokeniser(question) for question in questions]
-        self._utilisable = any(self._corpus)
-        if self._utilisable:
+        self._corpus = [tokenize(question) for question in questions]
+        self._usable = any(self._corpus)
+        if self._usable:
             self._bm25 = BM25Okapi(self._corpus)
             # Score maximal atteignable par chaque document : celui qu'il
             # obtient face à lui-même. Il sert à ramener les scores BM25,
             # non bornés, dans l'intervalle [0, 1].
-            self._auto_scores = [
-                float(self._bm25.get_scores(document)[indice])
-                for indice, document in enumerate(self._corpus)
+            self._self_scores = [
+                float(self._bm25.get_scores(doc)[index])
+                for index, doc in enumerate(self._corpus)
             ]
 
     def scores(self, question: str) -> list[float]:
-        """Score chaque entrée du référentiel face à une question.
+        """Score every indexed entry against a question.
 
         Args:
-            question: Question brute ou normalisée.
+            question: Raw or normalized question.
 
         Returns:
-            Un score normalisé dans `[0, 1]` par entrée indexée.
+            One score in `[0, 1]` per indexed entry.
         """
-        if not self._utilisable:
+        if not self._usable:
             return [0.0] * len(self._corpus)
-        jetons = tokeniser(question)
-        if not jetons:
+        tokens = tokenize(question)
+        if not tokens:
             return [0.0] * len(self._corpus)
-        bruts = self._bm25.get_scores(jetons)
-        resultat = []
-        for brut, auto in zip(bruts, self._auto_scores, strict=True):
-            if auto <= 0.0:
-                resultat.append(0.0)
+        raw = self._bm25.get_scores(tokens)
+        result = []
+        for score, self_score in zip(raw, self._self_scores, strict=True):
+            if self_score <= 0.0:
+                result.append(0.0)
             else:
-                resultat.append(min(1.0, max(0.0, float(brut) / auto)))
-        return resultat
+                result.append(min(1.0, max(0.0, float(score) / self_score)))
+        return result
 
 
 class LexicalMatcher:
-    """Appariement BM25 seul, hors ligne."""
+    """BM25-only matching, offline."""
 
     def __init__(
         self,
-        entrees: list[EntreeReferentiel],
-        seuil_haut: float,
-        seuil_bas: float,
+        entries: list[ReferenceEntry],
+        threshold_high: float,
+        threshold_low: float,
     ) -> None:
-        """Construit l'index lexical.
+        """Build the lexical index.
 
         Args:
-            entrees: Entrées du référentiel à indexer (typiquement les
-                entrées `ACTIF`).
-            seuil_haut: Score au-dessus duquel la décision est `MATCH`.
-            seuil_bas: Score au-dessus duquel la décision est `INCERTAIN`.
+            entries: Reference entries to index, typically the `ACTIF`
+                ones.
+            threshold_high: Score above which the decision is `MATCH`.
+            threshold_low: Score above which the decision is `INCERTAIN`.
         """
-        self.entrees = entrees
-        self.seuil_haut = seuil_haut
-        self.seuil_bas = seuil_bas
-        self._index = _IndexBm25(
-            [entree.question for entree in entrees]
-        )
+        self.entries = entries
+        self.threshold_high = threshold_high
+        self.threshold_low = threshold_low
+        self._index = _Bm25Index([entry.question for entry in entries])
 
-    def apparier(self, question: str) -> MatchResult:
-        """Apparie une question par recouvrement lexical.
+    def match(self, question: str) -> MatchResult:
+        """Match a question by vocabulary overlap.
 
         Args:
-            question: Question brute posée à la RAG.
+            question: Raw question asked to the RAG.
 
         Returns:
-            Le résultat de l'appariement.
+            The matching outcome.
         """
         scores = self._index.scores(question)
-        return decider(
-            self.entrees,
+        return decide(
+            self.entries,
             scores,
             {"lexical": scores},
-            self.seuil_haut,
-            self.seuil_bas,
+            self.threshold_high,
+            self.threshold_low,
         )
 
 
 class HybridMatcher:
-    """Appariement hybride : BM25 et similarité d'embeddings."""
+    """Hybrid matching: BM25 plus embedding similarity."""
 
     def __init__(
         self,
-        entrees: list[EntreeReferentiel],
+        entries: list[ReferenceEntry],
         backend: EmbeddingBackend,
-        seuil_haut: float,
-        seuil_bas: float,
-        poids_lexical: float = 0.4,
-        poids_semantique: float = 0.6,
+        threshold_high: float,
+        threshold_low: float,
+        lexical_weight: float = 0.4,
+        semantic_weight: float = 0.6,
     ) -> None:
-        """Construit l'index hybride.
+        """Build the hybrid index.
 
-        Les embeddings du référentiel sont calculés une fois à la
-        construction.
+        Repository embeddings are computed once, at construction time.
 
         Args:
-            entrees: Entrées du référentiel à indexer.
-            backend: Backend d'embeddings.
-            seuil_haut: Score au-dessus duquel la décision est `MATCH`.
-            seuil_bas: Score au-dessus duquel la décision est `INCERTAIN`.
-            poids_lexical: Poids du score BM25 dans la somme pondérée.
-            poids_semantique: Poids du score d'embeddings.
+            entries: Reference entries to index.
+            backend: Embedding backend.
+            threshold_high: Score above which the decision is `MATCH`.
+            threshold_low: Score above which the decision is `INCERTAIN`.
+            lexical_weight: Weight of the BM25 score in the weighted sum.
+            semantic_weight: Weight of the embedding score.
 
         Raises:
-            ValueError: Si la somme des poids n'est pas strictement
-                positive.
+            ValueError: If the weights do not sum to a positive number.
         """
-        if poids_lexical + poids_semantique <= 0:
+        if lexical_weight + semantic_weight <= 0:
             raise ValueError("La somme des poids doit être positive.")
-        self.entrees = entrees
+        self.entries = entries
         self.backend = backend
-        self.seuil_haut = seuil_haut
-        self.seuil_bas = seuil_bas
-        self.poids_lexical = poids_lexical
-        self.poids_semantique = poids_semantique
-        self._index = _IndexBm25([entree.question for entree in entrees])
-        self._vecteurs = backend.encoder(
-            [normaliser_question(entree.question) for entree in entrees]
+        self.threshold_high = threshold_high
+        self.threshold_low = threshold_low
+        self.lexical_weight = lexical_weight
+        self.semantic_weight = semantic_weight
+        self._index = _Bm25Index([entry.question for entry in entries])
+        self._vectors = backend.encode(
+            [normalize_question(entry.question) for entry in entries]
         )
 
-    def apparier(self, question: str) -> MatchResult:
-        """Apparie une question par somme pondérée des deux scores.
+    def match(self, question: str) -> MatchResult:
+        """Match a question by weighted sum of both scores.
 
         Args:
-            question: Question brute posée à la RAG.
+            question: Raw question asked to the RAG.
 
         Returns:
-            Le résultat de l'appariement.
+            The matching outcome.
         """
-        lexicaux = self._index.scores(question)
-        if self.entrees:
-            vecteur = self.backend.encoder(
-                [normaliser_question(question)]
-            )[0]
-            semantiques = [
-                similarite_cosinus(vecteur, reference)
-                for reference in self._vecteurs
+        lexical = self._index.scores(question)
+        if self.entries:
+            vector = self.backend.encode([normalize_question(question)])[0]
+            semantic = [
+                cosine_similarity(vector, reference)
+                for reference in self._vectors
             ]
         else:
-            semantiques = []
+            semantic = []
 
-        total = self.poids_lexical + self.poids_semantique
-        combines = [
-            (self.poids_lexical * lex + self.poids_semantique * sem) / total
-            for lex, sem in zip(lexicaux, semantiques, strict=True)
+        total = self.lexical_weight + self.semantic_weight
+        combined = [
+            (self.lexical_weight * lex + self.semantic_weight * sem) / total
+            for lex, sem in zip(lexical, semantic, strict=True)
         ]
-        return decider(
-            self.entrees,
-            combines,
-            {"lexical": lexicaux, "semantique": semantiques},
-            self.seuil_haut,
-            self.seuil_bas,
+        return decide(
+            self.entries,
+            combined,
+            {"lexical": lexical, "semantique": semantic},
+            self.threshold_high,
+            self.threshold_low,
         )
 
 
-def decider(
-    entrees: list[EntreeReferentiel],
+def decide(
+    entries: list[ReferenceEntry],
     scores: list[float],
-    composants: dict[str, list[float]],
-    seuil_haut: float,
-    seuil_bas: float,
+    components: dict[str, list[float]],
+    threshold_high: float,
+    threshold_low: float,
 ) -> MatchResult:
-    """Transforme des scores en décision d'appariement.
+    """Turn scores into a matching decision.
 
     Args:
-        entrees: Entrées indexées, dans l'ordre des scores.
-        scores: Score combiné par entrée.
-        composants: Scores composants, par nom, dans le même ordre.
-        seuil_haut: Score au-dessus duquel la décision est `MATCH`.
-        seuil_bas: Score au-dessus duquel la décision est `INCERTAIN`.
+        entries: Indexed entries, in the order of the scores.
+        scores: Combined score per entry.
+        components: Component scores, by name, in the same order.
+        threshold_high: Score above which the decision is `MATCH`.
+        threshold_low: Score above which the decision is `INCERTAIN`.
 
     Returns:
-        Le résultat de l'appariement ; `NOUVELLE` si le référentiel est
-        vide.
+        The matching outcome; `NOUVELLE` when the repository is empty.
     """
-    if not entrees or not scores:
+    if not entries or not scores:
         return MatchResult(decision="NOUVELLE", score=0.0)
 
-    meilleur = max(range(len(scores)), key=lambda i: scores[i])
-    score = scores[meilleur]
+    best = max(range(len(scores)), key=lambda i: scores[i])
+    score = scores[best]
     detail = {
-        nom: round(valeurs[meilleur], 4)
-        for nom, valeurs in composants.items()
-        if valeurs
+        name: round(values[best], 4)
+        for name, values in components.items()
+        if values
     }
-    if score >= seuil_haut:
+    if score >= threshold_high:
         decision: Decision = "MATCH"
-    elif score >= seuil_bas:
+    elif score >= threshold_low:
         decision = "INCERTAIN"
     else:
         return MatchResult(
@@ -264,7 +257,7 @@ def decider(
         )
     return MatchResult(
         decision=decision,
-        question_id=entrees[meilleur].question_id,
+        question_id=entries[best].question_id,
         score=round(score, 4),
         scores=detail,
     )

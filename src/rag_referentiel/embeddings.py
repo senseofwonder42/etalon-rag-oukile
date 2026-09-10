@@ -1,4 +1,4 @@
-"""Backends d'embeddings utilisés par l'appariement sémantique."""
+"""Embedding backends used by the semantic part of the matching."""
 
 import hashlib
 import math
@@ -10,169 +10,170 @@ from loguru import logger
 
 @runtime_checkable
 class EmbeddingBackend(Protocol):
-    """Fournit des vecteurs pour une liste de textes."""
+    """Provides vectors for a list of texts."""
 
-    def encoder(self, textes: list[str]) -> list[list[float]]:
-        """Encode des textes en vecteurs.
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """Encode texts into vectors.
 
         Args:
-            textes: Textes à encoder.
+            texts: Texts to encode.
 
         Returns:
-            Un vecteur par texte, dans le même ordre.
+            One vector per text, in the same order.
         """
         ...
 
 
-class ModeleIndisponibleError(RuntimeError):
-    """Le modèle d'embeddings demandé n'est pas exposé par le service."""
+class ModelUnavailableError(RuntimeError):
+    """The requested embedding model is not exposed by the service."""
 
 
 class FakeEmbeddings:
-    """Backend déterministe et hors ligne, pour les tests et la démo.
+    """Deterministic, offline backend, for tests and the demonstration.
 
-    Chaque jeton est projeté sur une dimension par hachage : deux textes
-    partageant du vocabulaire obtiennent des vecteurs proches. Ce n'est pas
-    de la sémantique, mais c'est reproductible et sans réseau.
+    Every token is projected onto a dimension by hashing: two texts
+    sharing vocabulary get close vectors. This is not semantics, but it
+    is reproducible and needs no network.
     """
 
     def __init__(self, dimension: int = 64) -> None:
-        """Initialise le backend.
+        """Initialize the backend.
 
         Args:
-            dimension: Taille des vecteurs produits.
+            dimension: Size of the produced vectors.
         """
         self.dimension = dimension
 
-    def encoder(self, textes: list[str]) -> list[list[float]]:
-        """Encode des textes en vecteurs déterministes.
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """Encode texts into deterministic vectors.
 
         Args:
-            textes: Textes à encoder.
+            texts: Texts to encode.
 
         Returns:
-            Un vecteur normé par texte.
+            One unit vector per text.
         """
-        return [self._encoder_un(texte) for texte in textes]
+        return [self._encode_one(text) for text in texts]
 
-    def _encoder_un(self, texte: str) -> list[float]:
-        from .normalisation import tokeniser
+    def _encode_one(self, text: str) -> list[float]:
+        from .normalisation import tokenize
 
-        vecteur = [0.0] * self.dimension
-        for jeton in tokeniser(texte):
-            empreinte = hashlib.sha1(jeton.encode("utf-8")).digest()
-            indice = empreinte[0] % self.dimension
-            vecteur[indice] += 1.0
-        norme = math.sqrt(sum(x * x for x in vecteur))
-        if norme == 0.0:
-            return vecteur
-        return [x / norme for x in vecteur]
+        vector = [0.0] * self.dimension
+        for token in tokenize(text):
+            digest = hashlib.sha1(token.encode("utf-8")).digest()
+            vector[digest[0] % self.dimension] += 1.0
+        norm = math.sqrt(sum(x * x for x in vector))
+        if norm == 0.0:
+            return vector
+        return [x / norm for x in vector]
 
 
 class JinaEmbeddings:
-    """Backend d'embeddings adossé à l'API Jina."""
+    """Embedding backend backed by the Jina API."""
 
     def __init__(
         self,
-        cle_api: str,
-        modele: str,
-        url_base: str,
+        api_key: str,
+        model: str,
+        base_url: str,
         client: httpx.Client | None = None,
     ) -> None:
-        """Initialise le backend.
+        """Initialize the backend.
 
         Args:
-            cle_api: Clé d'API Jina.
-            modele: Identifiant du modèle d'embeddings.
-            url_base: Racine de l'API, sans barre oblique finale.
-            client: Client HTTP à réutiliser (utile pour les tests).
+            api_key: Jina API key.
+            model: Identifier of the embedding model.
+            base_url: Root of the API, without trailing slash.
+            client: HTTP client to reuse (useful for tests).
         """
-        self.modele = modele
-        self.url_base = url_base.rstrip("/")
+        self.model = model
+        self.base_url = base_url.rstrip("/")
         self._client = client or httpx.Client(timeout=30.0)
-        self._entetes = {
-            "Authorization": f"Bearer {cle_api}",
+        self._headers = {
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
-    def verifier_modele(self) -> None:
-        """Vérifie que le modèle demandé est bien exposé par le service.
+    def check_model_available(self) -> None:
+        """Check that the requested model is exposed by the service.
 
         Raises:
-            ModeleIndisponibleError: Si le service ne répond pas ou si le
-                modèle demandé n'est pas dans la liste renvoyée.
+            ModelUnavailableError: If the service does not answer, or if
+                the requested model is missing from the returned list.
         """
-        url = f"{self.url_base}/models"
+        url = f"{self.base_url}/models"
         try:
-            reponse = self._client.get(url, headers=self._entetes)
-        except httpx.HTTPError as erreur:
-            raise ModeleIndisponibleError(
-                f"Impossible d'interroger {url} : {erreur}. Vérifier la clé "
+            response = self._client.get(url, headers=self._headers)
+        except httpx.HTTPError as error:
+            raise ModelUnavailableError(
+                f"Impossible d'interroger {url} : {error}. Vérifier la clé "
                 "JINA_API_KEY et l'URL du service."
-            ) from erreur
-        if reponse.status_code != httpx.codes.OK:
-            raise ModeleIndisponibleError(
-                f"{url} a répondu {reponse.status_code}. Impossible de "
-                f"confirmer la disponibilité du modèle « {self.modele} »."
+            ) from error
+        if response.status_code != httpx.codes.OK:
+            raise ModelUnavailableError(
+                f"{url} a répondu {response.status_code}. Impossible de "
+                f"confirmer la disponibilité du modèle « {self.model} »."
             )
-        disponibles = [
-            entree.get("id")
-            for entree in reponse.json().get("data", [])
-            if isinstance(entree, dict)
+        available = [
+            entry.get("id")
+            for entry in response.json().get("data", [])
+            if isinstance(entry, dict)
         ]
-        if self.modele not in disponibles:
-            liste = ", ".join(sorted(m for m in disponibles if m))
-            raise ModeleIndisponibleError(
-                f"Le modèle « {self.modele} » n'est pas disponible. "
-                f"Modèles exposés : {liste}"
+        if self.model not in available:
+            listed = ", ".join(sorted(m for m in available if m))
+            raise ModelUnavailableError(
+                f"Le modèle « {self.model} » n'est pas disponible. "
+                f"Modèles exposés : {listed}"
             )
-        logger.info("Modèle d'embeddings disponible : {}", self.modele)
+        logger.info("Modèle d'embeddings disponible : {}", self.model)
 
-    def encoder(self, textes: list[str]) -> list[list[float]]:
-        """Encode des textes via l'API Jina.
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """Encode texts through the Jina API.
 
         Args:
-            textes: Textes à encoder.
+            texts: Texts to encode.
 
         Returns:
-            Un vecteur par texte, dans le même ordre.
+            One vector per text, in the same order.
 
         Raises:
-            RuntimeError: Si l'API renvoie une erreur.
+            RuntimeError: If the API returns an error.
         """
-        if not textes:
+        if not texts:
             return []
-        reponse = self._client.post(
-            f"{self.url_base}/embeddings",
-            headers=self._entetes,
-            json={"model": self.modele, "input": textes},
+        response = self._client.post(
+            f"{self.base_url}/embeddings",
+            headers=self._headers,
+            json={"model": self.model, "input": texts},
         )
-        if reponse.status_code != httpx.codes.OK:
+        if response.status_code != httpx.codes.OK:
             raise RuntimeError(
-                f"Appel d'embeddings en échec ({reponse.status_code}) : "
-                f"{reponse.text[:200]}"
+                f"Appel d'embeddings en échec ({response.status_code}) : "
+                f"{response.text[:200]}"
             )
-        donnees = reponse.json().get("data", [])
-        return [entree["embedding"] for entree in donnees]
+        return [
+            entry["embedding"]
+            for entry in response.json().get("data", [])
+        ]
 
 
-def similarite_cosinus(gauche: list[float], droite: list[float]) -> float:
-    """Calcule la similarité cosinus de deux vecteurs.
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    """Compute the cosine similarity of two vectors.
 
     Args:
-        gauche: Premier vecteur.
-        droite: Second vecteur.
+        left: First vector.
+        right: Second vector.
 
     Returns:
-        La similarité, ramenée dans `[0, 1]` : les valeurs négatives sont
-        écrêtées à zéro, une opposition de sens ne valant pas mieux qu'une
-        absence de rapport pour l'appariement.
+        The similarity, clamped into `[0, 1]`: negative values are cut to
+        zero, opposite directions being no better than no relation at all
+        for matching purposes.
     """
-    if not gauche or not droite or len(gauche) != len(droite):
+    if not left or not right or len(left) != len(right):
         return 0.0
-    produit = sum(a * b for a, b in zip(gauche, droite, strict=True))
-    norme_g = math.sqrt(sum(a * a for a in gauche))
-    norme_d = math.sqrt(sum(b * b for b in droite))
-    if norme_g == 0.0 or norme_d == 0.0:
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    norm_left = math.sqrt(sum(a * a for a in left))
+    norm_right = math.sqrt(sum(b * b for b in right))
+    if norm_left == 0.0 or norm_right == 0.0:
         return 0.0
-    return max(0.0, produit / (norme_g * norme_d))
+    return max(0.0, dot / (norm_left * norm_right))

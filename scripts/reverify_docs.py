@@ -1,11 +1,10 @@
-"""Revérification déclenchée à la main après évolution des documents.
+"""Manually triggered recheck after documents evolve.
 
-Les documents bougent souvent de façon mineure : **aucune invalidation
-automatique**. Ce script se contente de constater la dérive
-(`--rapport`), ou de mettre en revérification les entrées citant les
-documents désignés (`--declencher`). Le retour à `ACTIF` — ou le passage
-à `ARCHIVE` — se fait par le job `ENTREE_TOUJOURS_VALIDE` du projet A,
-récupéré par `promote.py`.
+Documents move often, in minor ways: **no automatic invalidation**. This
+script only reports the drift (`--rapport`), or puts the entries citing
+the designated documents into recheck (`--declencher`). Going back to
+`ACTIF` — or moving to `ARCHIVE` — happens through the
+`ENTREE_TOUJOURS_VALIDE` job of project A, picked up by `promote.py`.
 """
 
 import argparse
@@ -13,119 +12,118 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from _commun import ecrire_json, parametres
+from _commun import settings, write_json
 from loguru import logger
 
-from rag_referentiel.client import creer_client
-from rag_referentiel.referentiel import charger_entrees, ecrire_entree
-from rag_referentiel.schemas import EntreeReferentiel
+from rag_referentiel.client import create_client
+from rag_referentiel.referentiel import load_entries, write_entry
+from rag_referentiel.schemas import ReferenceEntry
 
-PRIORITE_REVERIFICATION = 10
-
-
-def lire_versions(chemin: Path) -> dict[str, str]:
-    """Lit les versions courantes des documents.
-
-    Args:
-        chemin: Fichier JSON associant un `doc_id` à sa `doc_version`.
-
-    Returns:
-        Les versions courantes.
-
-    Raises:
-        FileNotFoundError: Si le fichier n'existe pas.
-    """
-    if not chemin.exists():
-        raise FileNotFoundError(f"Fichier introuvable : {chemin}")
-    return json.loads(chemin.read_text(encoding="utf-8"))
+RECHECK_PRIORITY = 10
 
 
-def analyser_pages(texte: str | None) -> tuple[int, int] | None:
-    """Analyse un intervalle de pages `10-20`.
+def read_versions(path: Path) -> dict[str, str]:
+    """Read the current versions of the documents.
 
     Args:
-        texte: Intervalle saisi, ou `None`.
+        path: JSON file mapping a `doc_id` to its `doc_version`.
 
     Returns:
-        Le couple (première page, dernière page), ou `None`.
+        The current versions.
 
     Raises:
-        ValueError: Si l'intervalle est mal formé.
+        FileNotFoundError: If the file does not exist.
     """
-    if not texte:
+    if not path.exists():
+        raise FileNotFoundError(f"Fichier introuvable : {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def parse_pages(text: str | None) -> tuple[int, int] | None:
+    """Parse a page range such as `10-20`.
+
+    Args:
+        text: Range as typed, or `None`.
+
+    Returns:
+        The pair (first page, last page), or `None`.
+
+    Raises:
+        ValueError: If the range is malformed.
+    """
+    if not text:
         return None
-    morceaux = texte.split("-")
-    if len(morceaux) != 2 or not all(m.strip().isdigit() for m in morceaux):
+    parts = text.split("-")
+    if len(parts) != 2 or not all(p.strip().isdigit() for p in parts):
         raise ValueError(
-            f"Intervalle de pages illisible : {texte} (attendu « 10-20 »)."
+            f"Intervalle de pages illisible : {text} (attendu « 10-20 »)."
         )
-    debut, fin = (int(m) for m in morceaux)
-    if debut > fin:
-        raise ValueError(f"Intervalle de pages inversé : {texte}.")
-    return debut, fin
+    first, last = (int(p) for p in parts)
+    if first > last:
+        raise ValueError(f"Intervalle de pages inversé : {text}.")
+    return first, last
 
 
-def entrees_derivantes(
-    entrees: list[EntreeReferentiel], versions: dict[str, str]
+def drifting_entries(
+    entries: list[ReferenceEntry], versions: dict[str, str]
 ) -> list[dict]:
-    """Liste les entrées dont une source a changé de version.
+    """List the entries whose source changed version.
 
     Args:
-        entrees: Entrées du référentiel.
-        versions: Versions courantes des documents.
+        entries: Repository entries.
+        versions: Current versions of the documents.
 
     Returns:
-        Un enregistrement par entrée concernée, avec le détail des
-        sources ayant dérivé.
+        One record per affected entry, detailing the drifting sources.
     """
-    rapport = []
-    for entree in entrees:
-        derives = [
+    report = []
+    for entry in entries:
+        drifts = [
             {
                 "doc_id": source.doc_id,
                 "page": source.page,
                 "version_stockee": source.doc_version,
                 "version_courante": versions[source.doc_id],
             }
-            for source in entree.sources
+            for source in entry.sources
             if source.doc_id in versions
             and source.doc_version != versions[source.doc_id]
         ]
-        if derives:
-            rapport.append(
+        if drifts:
+            report.append(
                 {
-                    "question_id": entree.question_id,
-                    "question": entree.question,
-                    "statut": entree.statut,
-                    "sources_derivantes": derives,
+                    "question_id": entry.question_id,
+                    "question": entry.question,
+                    "statut": entry.statut,
+                    "sources_derivantes": drifts,
                 }
             )
-    return rapport
+    return report
 
 
-def entrees_impactees(
-    entrees: list[EntreeReferentiel],
-    docs: list[str],
+def impacted_entries(
+    entries: list[ReferenceEntry],
+    documents: list[str],
     pages: tuple[int, int] | None,
-) -> list[EntreeReferentiel]:
-    """Sélectionne les entrées citant les documents désignés.
+) -> list[ReferenceEntry]:
+    """Select the entries citing the designated documents.
 
-    Une source sans page est retenue dès que son document est désigné :
-    l'intervalle de pages ne peut pas l'écarter.
+    A source without a page is kept as soon as its document is
+    designated: the page range cannot rule it out.
 
     Args:
-        entrees: Entrées du référentiel.
-        docs: Documents désignés.
-        pages: Intervalle de pages, ou `None` pour tout le document.
+        entries: Repository entries.
+        documents: Designated documents.
+        pages: Page range, or `None` for the whole document.
 
     Returns:
-        Les entrées impactées.
+        The impacted entries.
     """
-    designes = set(docs)
-    retenues = []
-    for entree in entrees:
-        for source in entree.sources:
-            if source.doc_id not in designes:
+    designated = set(documents)
+    kept = []
+    for entry in entries:
+        for source in entry.sources:
+            if source.doc_id not in designated:
                 continue
             if (
                 pages is not None
@@ -133,34 +131,34 @@ def entrees_impactees(
                 and not pages[0] <= source.page <= pages[1]
             ):
                 continue
-            retenues.append(entree)
+            kept.append(entry)
             break
-    return retenues
+    return kept
 
 
-def declencher(
+def trigger_recheck(
     kili: object,
     project_id: str,
-    entrees: list[EntreeReferentiel],
-    taille_max_metadata: int,
+    entries: list[ReferenceEntry],
+    max_metadata_size: int,
 ) -> None:
-    """Passe des entrées en revérification et les remet dans la file.
+    """Put entries into recheck and send them back to the queue.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet A.
-        entrees: Entrées à mettre en revérification.
-        taille_max_metadata: Seuil de repli de la metadata, en octets.
+        kili: Kili client.
+        project_id: Identifier of project A.
+        entries: Entries to put into recheck.
+        max_metadata_size: Metadata fallback threshold, in bytes.
     """
-    external_ids = [entree.question_id for entree in entrees]
-    for entree in entrees:
-        entree.statut = "A_REVERIFIER"
-        entree.version += 1
-        ecrire_entree(kili, project_id, entree, taille_max_metadata)
+    external_ids = [entry.question_id for entry in entries]
+    for entry in entries:
+        entry.statut = "A_REVERIFIER"
+        entry.version += 1
+        write_entry(kili, project_id, entry, max_metadata_size)
     kili.update_properties_in_assets(
         project_id=project_id,
         external_ids=external_ids,
-        priorities=[PRIORITE_REVERIFICATION] * len(external_ids),
+        priorities=[RECHECK_PRIORITY] * len(external_ids),
     )
     kili.send_back_to_queue(
         project_id=project_id, external_ids=external_ids
@@ -169,105 +167,116 @@ def declencher(
 
 
 def main() -> None:
-    """Point d'entrée du script de revérification."""
-    analyseur = argparse.ArgumentParser(description=__doc__)
-    analyseur.add_argument(
-        "--projet-referentiel", required=True, help="Projet A."
+    """Entry point of the recheck script."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--projet-referentiel",
+        dest="reference_project",
+        required=True,
+        help="Projet A.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--rapport",
+        dest="report",
         action="store_true",
         help="Compare les versions stockées aux versions courantes.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--versions",
+        dest="versions_path",
         type=Path,
         default=None,
         help="JSON { doc_id: doc_version } des versions courantes.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--declencher",
+        dest="trigger",
         action="store_true",
         help="Passe les entrées visées en A_REVERIFIER.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--doc",
+        dest="documents",
         action="append",
         default=[],
         help="Document concerné (répétable).",
     )
-    analyseur.add_argument(
-        "--pages", default=None, help="Intervalle de pages, ex. « 10-20 »."
+    parser.add_argument(
+        "--pages",
+        dest="pages",
+        default=None,
+        help="Intervalle de pages, ex. « 10-20 ».",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--dry-run",
+        dest="dry_run",
         action="store_true",
         help="Affiche ce qui serait fait, sans rien modifier.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--sortie",
+        dest="output_path",
         type=Path,
         default=None,
         help="Fichier du rapport de dérive.",
     )
-    arguments = analyseur.parse_args()
+    arguments = parser.parse_args()
 
-    if not arguments.rapport and not arguments.declencher:
-        analyseur.error("Choisir --rapport ou --declencher.")
+    if not arguments.report and not arguments.trigger:
+        parser.error("Choisir --rapport ou --declencher.")
 
-    config = parametres()
-    kili = creer_client(config)
-    entrees = charger_entrees(kili, arguments.projet_referentiel)
-    horodatage = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    config = settings()
+    kili = create_client(config)
+    entries = load_entries(kili, arguments.reference_project)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
-    if arguments.rapport:
-        if arguments.versions is None:
-            analyseur.error("--rapport exige --versions.")
-        derives = entrees_derivantes(
-            entrees, lire_versions(arguments.versions)
+    if arguments.report:
+        if arguments.versions_path is None:
+            parser.error("--rapport exige --versions.")
+        drifts = drifting_entries(
+            entries, read_versions(arguments.versions_path)
         )
-        for element in derives:
+        for item in drifts:
             logger.info(
-                "Dérive : {} — {}",
-                element["question_id"],
-                element["question"],
+                "Dérive : {} — {}", item["question_id"], item["question"]
             )
-        ecrire_json(
-            arguments.sortie
-            or Path(f"reports/derive_documentaire_{horodatage}.json"),
+        write_json(
+            arguments.output_path
+            or Path(f"reports/derive_documentaire_{stamp}.json"),
             {
-                "horodatage": horodatage,
-                "entrees_examinees": len(entrees),
-                "entrees_derivantes": derives,
+                "horodatage": stamp,
+                "entrees_examinees": len(entries),
+                "entrees_derivantes": drifts,
             },
         )
 
-    if arguments.declencher:
-        if not arguments.doc:
-            analyseur.error("--declencher exige au moins un --doc.")
-        impactees = entrees_impactees(
-            entrees, arguments.doc, analyser_pages(arguments.pages)
+    if arguments.trigger:
+        if not arguments.documents:
+            parser.error("--declencher exige au moins un --doc.")
+        impacted = impacted_entries(
+            entries, arguments.documents, parse_pages(arguments.pages)
         )
-        for entree in impactees:
+        for entry in impacted:
             logger.info(
                 "{} : {} — {}",
-                "à revérifier" if not arguments.dry_run else "serait "
-                "mise en revérification",
-                entree.question_id,
-                entree.question,
+                "serait mise en revérification"
+                if arguments.dry_run
+                else "à revérifier",
+                entry.question_id,
+                entry.question,
             )
         if arguments.dry_run:
             logger.info(
                 "--dry-run : {} entrées seraient modifiées, rien n'a été "
                 "écrit.",
-                len(impactees),
+                len(impacted),
             )
             return
-        declencher(
+        trigger_recheck(
             kili,
-            arguments.projet_referentiel,
-            impactees,
-            config.taille_max_metadata,
+            arguments.reference_project,
+            impacted,
+            config.max_metadata_size,
         )
 
 

@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **110 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **111 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -73,6 +73,34 @@ corrections) n'a **pas** été retenue : les deux briques existent bien dans
 le SDK 2.142.1, mais l'affichage des enfants sous une sélection multiple
 est un comportement **serveur** non vérifiable ici. Elle reste ouverte,
 et son passage ne toucherait pas au modèle de données.
+
+## Convention de langue
+
+Le dépôt a été retourné à la convention du cahier des charges, que la
+première livraison n'avait pas respectée : **les identifiants Python sont
+en anglais** — fonctions, classes, paramètres, variables et noms de tests
+— et les **docstrings** le sont aussi. Reste en français tout ce qu'une
+personne lit : le README, les commentaires, les messages de log et
+d'erreur, les libellés et instructions des jobs Kili, et les options de
+ligne de commande, reliées à un attribut anglais par le `dest`
+d'argparse.
+
+Deux exceptions assumées :
+
+- les **noms de modules** (`referentiel.py`, `revue.py`,
+  `normalisation.py`) sont conservés : l'arborescence était fixée par le
+  cahier des charges, et `referentiel` / `revue` désignent les deux
+  projets Kili ;
+- les **noms de champs pydantic** (`statut`, `origine`, `auteur`,
+  `derniere_verification`, `repli_texte`, `statut_revue`, …) sont
+  conservés : ce sont les clés du `json_metadata` spécifiées dans le
+  cahier des charges, relues à chaque exécution et présentes dans les
+  exports JSONL. Les renommer aurait cassé le contrat de données.
+
+Les noms des variables d'environnement de réglage suivent les champs de
+`Settings` et ont donc changé (`SEUIL_APPARIEMENT_HAUT` devient
+`MATCH_THRESHOLD_HIGH`, etc.) ; `KILI_API_KEY`, `KILI_API_ENDPOINT`,
+`KILI_CA_BUNDLE`, `ANTHROPIC_API_KEY` et `JINA_API_KEY` sont inchangées.
 
 ## Choix et hypothèses
 

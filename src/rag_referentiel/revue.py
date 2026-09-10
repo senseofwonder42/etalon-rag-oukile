@@ -1,27 +1,27 @@
-"""Projet B — Revue prod RAG : création et lecture des cas à arbitrer.
+"""Project B — Revue prod RAG: creation and reading of the cases.
 
-Ce projet est la file de travail du métier : un asset = une occurrence de
-production à trancher. Il ne pollue jamais le référentiel ; seul
-`promote.py` transfère les arbitrages vers le projet A.
+This project is the working queue of the business team: one asset is one
+production occurrence to arbitrate. It never pollutes the reference
+repository; only `promote.py` moves arbitrations over to project A.
 """
 
 from loguru import logger
 from pydantic import BaseModel
 
-from .interfaces import INTERFACE_REVUE
+from .interfaces import REVIEW_INTERFACE
 from .labels import (
-    auteur_de,
-    categorie,
-    charger_metadata,
-    dernier_label,
+    author_of,
+    category,
+    latest_label,
+    load_metadata,
     transcription,
 )
-from .normalisation import calculer_external_id_revue
-from .rendering import rendu_asset_revue
-from .schemas import Answer, CasRevue, StatutRevue
-from .storage import preparer_charge
+from .normalisation import compute_review_external_id
+from .rendering import render_review_asset
+from .schemas import Answer, ReviewCase, ReviewStatus
+from .storage import prepare_payload
 
-CHAMPS_CAS = [
+CASE_FIELDS = [
     "externalId",
     "id",
     "jsonMetadata",
@@ -33,224 +33,227 @@ CHAMPS_CAS = [
 ]
 
 
-class LabelRevue(BaseModel):
-    """Arbitrage métier lu sur un asset du projet B."""
+class ReviewLabel(BaseModel):
+    """Business arbitration read on a project B asset."""
 
-    auteur: str
+    author: str
     date: str
-    meme_question: str | None = None
-    candidate_correcte: str | None = None
-    version_corrigee: str | None = None
-    sources_pertinentes: str | None = None
-    sources_corrigees: str | None = None
+    same_question: str | None = None
+    candidate_correct: str | None = None
+    corrected_version: str | None = None
+    sources_relevant: str | None = None
+    corrected_sources: str | None = None
 
 
-class CasArbitre(BaseModel):
-    """Cas de revue accompagné de son arbitrage."""
+class ArbitratedCase(BaseModel):
+    """Review case together with its arbitration."""
 
     external_id: str
-    cas: CasRevue
-    label: LabelRevue
+    case: ReviewCase
+    label: ReviewLabel
 
 
-def creer_projet(kili: object, titre: str) -> str:
-    """Crée le projet Kili de revue.
+def create_project(kili: object, title: str) -> str:
+    """Create the Kili review project.
 
     Args:
-        kili: Client Kili.
-        titre: Titre du projet.
+        kili: Kili client.
+        title: Project title.
 
     Returns:
-        L'identifiant du projet créé.
+        The identifier of the created project.
     """
-    projet = kili.create_project(
-        title=titre,
+    project = kili.create_project(
+        title=title,
         input_type="TEXT",
-        json_interface=INTERFACE_REVUE,
+        json_interface=REVIEW_INTERFACE,
         description=(
             "File de revue métier des occurrences de production du RAG."
         ),
     )
-    logger.info("Projet de revue créé : {}", projet["id"])
-    return projet["id"]
+    logger.info("Projet de revue créé : {}", project["id"])
+    return project["id"]
 
 
-def calculer_identifiants(cas: list[CasRevue]) -> list[str]:
-    """Attribue un `external_id` unique à chaque cas d'un lot.
+def compute_external_ids(cases: list[ReviewCase]) -> list[str]:
+    """Assign a unique `external_id` to every case of a batch.
 
-    Deux occurrences d'un même run appariées à la même question
-    produiraient le même identifiant : un suffixe les distingue, sans quoi
-    le SDK écarterait silencieusement le doublon à l'import.
+    Two occurrences of the same run matched to the same question would
+    produce the same identifier: a suffix tells them apart, otherwise the
+    SDK would silently drop the duplicate at import time.
 
     Args:
-        cas: Cas de revue du lot.
+        cases: Review cases of the batch.
 
     Returns:
-        Les `external_id`, dans l'ordre des cas.
+        The `external_id` values, in the order of the cases.
     """
-    pris: set[str] = set()
-    identifiants: list[str] = []
-    for element in cas:
-        base = calculer_external_id_revue(element.question_id, element.run_id)
-        identifiant = base
-        suffixe = 2
-        while identifiant in pris:
-            identifiant = f"{base}_{suffixe}"
-            suffixe += 1
-        pris.add(identifiant)
-        identifiants.append(identifiant)
-    return identifiants
+    taken: set[str] = set()
+    identifiers: list[str] = []
+    for case in cases:
+        base = compute_review_external_id(case.question_id, case.run_id)
+        identifier = base
+        suffix = 2
+        while identifier in taken:
+            identifier = f"{base}_{suffix}"
+            suffix += 1
+        taken.add(identifier)
+        identifiers.append(identifier)
+    return identifiers
 
 
-def creer_cas(
+def create_cases(
     kili: object,
     project_id: str,
-    cas: list[CasRevue],
+    cases: list[ReviewCase],
     external_ids: list[str],
-    reponses_par_question: dict[str, list[Answer]],
-    questions_candidates: dict[str, str],
-    taille_max_metadata: int,
+    answers_by_question: dict[str, list[Answer]],
+    candidate_questions: dict[str, str],
+    max_metadata_size: int,
 ) -> list[str]:
-    """Importe des cas de revue dans le projet B.
+    """Import review cases into project B.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet de revue.
-        cas: Cas à créer.
-        external_ids: Identifiants externes des assets, dans l'ordre des
-            cas (voir `calculer_identifiants`).
-        reponses_par_question: Formulations validées, par `question_id`,
-            à afficher en regard de la réponse candidate.
-        questions_candidates: Question du référentiel proposée, par
-            `question_id` candidat, pour les appariements incertains.
-        taille_max_metadata: Seuil de repli de la metadata, en octets.
-            L'import se faisant par lot, le repli est ici décidé sur la
-            taille mesurée, sans nouvelle tentative après refus serveur.
+        kili: Kili client.
+        project_id: Identifier of the review project.
+        cases: Cases to create.
+        external_ids: External ids of the assets, in the order of the
+            cases (see `compute_external_ids`).
+        answers_by_question: Validated wordings, by `question_id`, to
+            display next to the candidate answer.
+        candidate_questions: Reference question proposed by the matching,
+            by candidate `question_id`, for uncertain matches.
+        max_metadata_size: Metadata fallback threshold, in bytes. The
+            import being batched, the fallback is decided here on the
+            measured size, without a retry after a server refusal.
 
     Returns:
-        Les `external_id` des assets créés.
+        The `external_id` values of the created assets.
     """
-    if not cas:
+    if not cases:
         return []
 
-    contenus: list[list[dict]] = []
+    contents: list[list[dict]] = []
     metadatas: list[dict] = []
 
-    for element in cas:
-        rendu = rendu_asset_revue(
-            element,
-            reponses_par_question.get(
-                element.question_id_candidat or element.question_id, []
+    for case in cases:
+        rendering = render_review_asset(
+            case,
+            answers_by_question.get(
+                case.question_id_candidat or case.question_id, []
             ),
-            questions_candidates.get(element.question_id_candidat or ""),
+            candidate_questions.get(case.question_id_candidat or ""),
         )
-        charge = preparer_charge(
-            element.model_dump(), rendu, taille_max_metadata
+        payload = prepare_payload(
+            case.model_dump(), rendering, max_metadata_size
         )
-        contenus.append(charge.json_content)
-        metadatas.append(charge.json_metadata)
+        contents.append(payload.json_content)
+        metadatas.append(payload.json_metadata)
 
     kili.append_many_to_dataset(
         project_id=project_id,
         external_id_array=external_ids,
-        json_content_array=contenus,
+        json_content_array=contents,
         json_metadata_array=metadatas,
     )
     logger.info("{} cas de revue importés.", len(external_ids))
     return external_ids
 
 
-def lire_cas_arbitres(kili: object, project_id: str) -> list[CasArbitre]:
-    """Lit les cas en attente qui portent un arbitrage métier.
+def read_arbitrated_cases(
+    kili: object, project_id: str
+) -> list[ArbitratedCase]:
+    """Read the pending cases that carry a business arbitration.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet de revue.
+        kili: Kili client.
+        project_id: Identifier of the review project.
 
     Returns:
-        Les cas dont le `statut_revue` vaut `EN_ATTENTE` et qui portent au
-        moins un label.
+        The cases whose `statut_revue` is `EN_ATTENTE` and that carry at
+        least one label.
     """
     assets = kili.assets(
         project_id=project_id,
-        fields=CHAMPS_CAS,
+        fields=CASE_FIELDS,
         metadata_where={"statut_revue": "EN_ATTENTE"},
     )
-    resultat: list[CasArbitre] = []
+    result: list[ArbitratedCase] = []
     for asset in assets:
-        metadata = charger_metadata(asset.get("jsonMetadata"))
+        metadata = load_metadata(asset.get("jsonMetadata"))
         if metadata.get("statut_revue") != "EN_ATTENTE":
             continue
-        brut = dernier_label(asset.get("labels") or [])
-        if brut is None:
+        raw_label = latest_label(asset.get("labels") or [])
+        if raw_label is None:
             continue
-        label = _lire_label(brut)
         try:
-            cas = CasRevue.model_validate(metadata)
-        except ValueError as erreur:
+            case = ReviewCase.model_validate(metadata)
+        except ValueError as error:
             logger.warning(
                 "Cas de revue illisible ({}) : {}",
                 asset.get("externalId"),
-                erreur,
+                error,
             )
             continue
-        resultat.append(
-            CasArbitre(
-                external_id=asset["externalId"], cas=cas, label=label
+        result.append(
+            ArbitratedCase(
+                external_id=asset["externalId"],
+                case=case,
+                label=_parse_label(raw_label),
             )
         )
-    return resultat
+    return result
 
 
-def marquer_statut(
+def set_review_status(
     kili: object,
     project_id: str,
     external_ids: list[str],
-    statut: StatutRevue,
-    cas_par_external_id: dict[str, CasRevue],
+    status: ReviewStatus,
+    cases_by_external_id: dict[str, ReviewCase],
 ) -> None:
-    """Met à jour le `statut_revue` d'assets du projet B.
+    """Update the `statut_revue` of project B assets.
 
     Args:
-        kili: Client Kili.
-        project_id: Identifiant du projet de revue.
-        external_ids: Assets à mettre à jour.
-        statut: Nouveau statut de revue.
-        cas_par_external_id: Cas correspondants, pour réécrire une
-            metadata complète.
+        kili: Kili client.
+        project_id: Identifier of the review project.
+        external_ids: Assets to update.
+        status: New review status.
+        cases_by_external_id: Matching cases, to rewrite a complete
+            metadata.
     """
     if not external_ids:
         return
     metadatas = []
     for external_id in external_ids:
-        cas = cas_par_external_id[external_id].model_copy(
-            update={"statut_revue": statut}
+        case = cases_by_external_id[external_id].model_copy(
+            update={"statut_revue": status}
         )
-        metadatas.append(cas.model_dump())
+        metadatas.append(case.model_dump())
     kili.update_properties_in_assets(
         project_id=project_id,
         external_ids=external_ids,
         json_metadatas=metadatas,
     )
-    logger.info("{} cas passés en {}.", len(external_ids), statut)
+    logger.info("{} cas passés en {}.", len(external_ids), status)
 
 
-def _lire_label(label: dict) -> LabelRevue:
-    """Traduit un label Kili en arbitrage métier.
+def _parse_label(label: dict) -> ReviewLabel:
+    """Translate a Kili label into a business arbitration.
 
     Args:
-        label: Label renvoyé par Kili.
+        label: Label returned by Kili.
 
     Returns:
-        L'arbitrage correspondant.
+        The matching arbitration.
     """
-    reponse = label.get("jsonResponse") or {}
-    return LabelRevue(
-        auteur=auteur_de(label),
+    response = label.get("jsonResponse") or {}
+    return ReviewLabel(
+        author=author_of(label),
         date=(label.get("createdAt") or "")[:10],
-        meme_question=categorie(reponse, "MEME_QUESTION"),
-        candidate_correcte=categorie(reponse, "CANDIDATE_CORRECTE"),
-        version_corrigee=transcription(reponse, "VERSION_CORRIGEE"),
-        sources_pertinentes=categorie(reponse, "SOURCES_PERTINENTES"),
-        sources_corrigees=transcription(reponse, "SOURCES_CORRIGEES"),
+        same_question=category(response, "MEME_QUESTION"),
+        candidate_correct=category(response, "CANDIDATE_CORRECTE"),
+        corrected_version=transcription(response, "VERSION_CORRIGEE"),
+        sources_relevant=category(response, "SOURCES_PERTINENTES"),
+        corrected_sources=transcription(response, "SOURCES_CORRIGEES"),
     )

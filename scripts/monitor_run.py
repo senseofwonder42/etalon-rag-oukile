@@ -1,8 +1,8 @@
-"""De la production vers la revue : traite un JSONL d'occurrences.
+"""From production to review: process a JSONL of occurrences.
 
-Chaque occurrence est appariée au référentiel, éventuellement soumise au
-LLM-as-judge, et envoyée en revue métier si nécessaire. **Aucune écriture
-dans le projet A à cette étape.**
+Every occurrence is matched against the repository, possibly submitted to
+the LLM-as-judge, and sent to business review when needed. **Nothing is
+written into project A at this stage.**
 """
 
 import argparse
@@ -10,51 +10,49 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from _commun import ecrire_json, lire_jsonl, parametres
+from _commun import read_jsonl, settings, write_json
 from loguru import logger
 
-from rag_referentiel.client import creer_client
-from rag_referentiel.config import Parametres
+from rag_referentiel.client import create_client
+from rag_referentiel.config import Settings
 from rag_referentiel.embeddings import JinaEmbeddings
-from rag_referentiel.judge import AnswerJudge, JugeClaude, JugeLexical
+from rag_referentiel.judge import AnswerJudge, ClaudeJudge, LexicalJudge
 from rag_referentiel.matching import (
     HybridMatcher,
     LexicalMatcher,
     QuestionMatcher,
 )
-from rag_referentiel.normalisation import calculer_question_id
-from rag_referentiel.referentiel import charger_entrees
-from rag_referentiel.revue import calculer_identifiants, creer_cas
+from rag_referentiel.normalisation import compute_question_id
+from rag_referentiel.referentiel import load_entries
+from rag_referentiel.revue import compute_external_ids, create_cases
 from rag_referentiel.schemas import (
-    CasRevue,
-    EntreeReferentiel,
-    OccurrenceProd,
+    ProductionOccurrence,
+    ReferenceEntry,
+    ReviewCase,
 )
 
 
-def construire_matcher(
-    entrees: list[EntreeReferentiel],
-    config: Parametres,
-    hors_ligne: bool,
+def build_matcher(
+    entries: list[ReferenceEntry],
+    config: Settings,
+    offline: bool,
 ) -> QuestionMatcher:
-    """Construit le matcher, hybride par défaut.
+    """Build the matcher, hybrid by default.
 
     Args:
-        entrees: Entrées `ACTIF` du référentiel.
-        config: Paramètres d'exécution.
-        hors_ligne: Si vrai, se limite à BM25, sans appel réseau.
+        entries: `ACTIF` entries of the repository.
+        config: Runtime settings.
+        offline: When true, restrict to BM25, with no network call.
 
     Returns:
-        Le matcher à utiliser.
+        The matcher to use.
 
     Raises:
-        RuntimeError: Si la clé Jina manque en mode hybride.
+        RuntimeError: If the Jina key is missing in hybrid mode.
     """
-    if hors_ligne:
+    if offline:
         return LexicalMatcher(
-            entrees,
-            config.seuil_appariement_haut,
-            config.seuil_appariement_bas,
+            entries, config.match_threshold_high, config.match_threshold_low
         )
     if not config.jina_api_key:
         raise RuntimeError(
@@ -62,36 +60,36 @@ def construire_matcher(
             "la clé."
         )
     backend = JinaEmbeddings(
-        cle_api=config.jina_api_key,
-        modele=config.modele_embeddings,
-        url_base=config.url_jina,
+        api_key=config.jina_api_key,
+        model=config.embedding_model,
+        base_url=config.jina_base_url,
     )
-    backend.verifier_modele()
+    backend.check_model_available()
     return HybridMatcher(
-        entrees,
+        entries,
         backend,
-        config.seuil_appariement_haut,
-        config.seuil_appariement_bas,
-        config.poids_lexical,
-        config.poids_semantique,
+        config.match_threshold_high,
+        config.match_threshold_low,
+        config.lexical_weight,
+        config.semantic_weight,
     )
 
 
-def construire_juge(config: Parametres, hors_ligne: bool) -> AnswerJudge:
-    """Construit le juge, adossé à Claude par défaut.
+def build_judge(config: Settings, offline: bool) -> AnswerJudge:
+    """Build the judge, backed by Claude by default.
 
     Args:
-        config: Paramètres d'exécution.
-        hors_ligne: Si vrai, utilise le juge lexical déterministe.
+        config: Runtime settings.
+        offline: When true, use the deterministic lexical judge.
 
     Returns:
-        Le juge à utiliser.
+        The judge to use.
 
     Raises:
-        RuntimeError: Si la clé Anthropic manque en mode connecté.
+        RuntimeError: If the Anthropic key is missing in online mode.
     """
-    if hors_ligne:
-        return JugeLexical(config.seuil_juge_lexical)
+    if offline:
+        return LexicalJudge(config.lexical_judge_threshold)
     if not config.anthropic_api_key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY absente : utiliser --hors-ligne ou "
@@ -99,188 +97,198 @@ def construire_juge(config: Parametres, hors_ligne: bool) -> AnswerJudge:
         )
     import anthropic
 
-    return JugeClaude(
+    return ClaudeJudge(
         client=anthropic.Anthropic(api_key=config.anthropic_api_key),
-        modele=config.modele_juge,
-        max_references=config.max_references_juge,
+        model=config.judge_model,
+        max_references=config.max_judge_references,
     )
 
 
-def traiter(
+def process(
     occurrences: list[dict],
-    entrees: list[EntreeReferentiel],
+    entries: list[ReferenceEntry],
     matcher: QuestionMatcher,
-    juge: AnswerJudge,
-) -> tuple[list[CasRevue], dict]:
-    """Apparie, juge et prépare les cas de revue.
+    judge: AnswerJudge,
+) -> tuple[list[ReviewCase], dict]:
+    """Match, judge and prepare the review cases.
 
     Args:
-        occurrences: Lignes du JSONL de production.
-        entrees: Entrées `ACTIF` du référentiel.
-        matcher: Matcher de questions.
-        juge: LLM-as-judge.
+        occurrences: Lines of the production JSONL.
+        entries: `ACTIF` entries of the repository.
+        matcher: Question matcher.
+        judge: LLM-as-judge.
 
     Returns:
-        Le couple (cas de revue à créer, éléments du rapport).
+        The pair (review cases to create, report fields).
     """
-    par_id = {entree.question_id: entree for entree in entrees}
-    debut = time.perf_counter()
+    by_id = {entry.question_id: entry for entry in entries}
+    start = time.perf_counter()
     decisions = {"MATCH": 0, "INCERTAIN": 0, "NOUVELLE": 0}
-    juges = 0
-    conformes = 0
-    ignorees = 0
-    cas: list[CasRevue] = []
-    envoyes: list[dict] = []
+    judged = 0
+    compliant = 0
+    skipped = 0
+    cases: list[ReviewCase] = []
+    sent: list[dict] = []
 
-    for ligne in occurrences:
-        occurrence = OccurrenceProd.model_validate(ligne)
+    for line in occurrences:
+        occurrence = ProductionOccurrence.model_validate(line)
         try:
-            question_id = calculer_question_id(occurrence.question)
+            question_id = compute_question_id(occurrence.question)
         except ValueError:
             logger.warning(
                 "Occurrence {} sans question exploitable : ignorée.",
                 occurrence.run_id,
             )
-            ignorees += 1
+            skipped += 1
             continue
 
-        resultat = matcher.apparier(occurrence.question)
-        decisions[resultat.decision] += 1
-        motif = None
+        result = matcher.match(occurrence.question)
+        decisions[result.decision] += 1
+        reason = None
         verdict = None
-        cible = question_id
-        candidat = None
+        target = question_id
+        candidate = None
 
-        if resultat.decision == "MATCH":
-            entree = par_id[resultat.question_id]
-            juges += 1
-            verdict = juge.juger(
+        if result.decision == "MATCH":
+            entry = by_id[result.question_id]
+            judged += 1
+            verdict = judge.judge(
                 occurrence.question,
                 occurrence.answer_markdown,
-                [reponse.text for reponse in entree.answers],
+                [answer.text for answer in entry.answers],
             )
             if verdict.conforme:
-                conformes += 1
+                compliant += 1
                 continue
-            motif = "DIVERGENCE"
-            cible = entree.question_id
-        elif resultat.decision == "INCERTAIN":
-            motif = "APPARIEMENT_INCERTAIN"
-            candidat = resultat.question_id
+            reason = "DIVERGENCE"
+            target = entry.question_id
+        elif result.decision == "INCERTAIN":
+            reason = "APPARIEMENT_INCERTAIN"
+            candidate = result.question_id
         else:
-            motif = "NOUVELLE_QUESTION"
+            reason = "NOUVELLE_QUESTION"
 
-        cas.append(
-            CasRevue(
-                question_id=cible,
+        cases.append(
+            ReviewCase(
+                question_id=target,
                 run_id=occurrence.run_id,
-                motif=motif,
+                motif=reason,
                 question=occurrence.question,
                 candidate_answer=occurrence.answer_markdown,
                 sources=occurrence.sources,
                 verdict_juge=verdict,
-                score_appariement=resultat.score,
-                question_id_candidat=candidat,
+                score_appariement=result.score,
+                question_id_candidat=candidate,
             )
         )
-        envoyes.append(
+        sent.append(
             {
                 "run_id": occurrence.run_id,
-                "motif": motif,
-                "question_id": cible,
-                "question_id_candidat": candidat,
-                "score_appariement": resultat.score,
+                "motif": reason,
+                "question_id": target,
+                "question_id_candidat": candidate,
+                "score_appariement": result.score,
             }
         )
 
-    duree = time.perf_counter() - debut
-    traitees = len(occurrences) - ignorees
-    rapport = {
+    elapsed = time.perf_counter() - start
+    processed = len(occurrences) - skipped
+    report = {
         "occurrences": len(occurrences),
-        "ignorees": ignorees,
+        "ignorees": skipped,
         "decisions": decisions,
         "conformite": {
-            "cas_juges": juges,
-            "conformes": conformes,
-            "taux": round(conformes / juges, 4) if juges else None,
+            "cas_juges": judged,
+            "conformes": compliant,
+            "taux": round(compliant / judged, 4) if judged else None,
         },
         "latence_secondes": {
-            "total": round(duree, 3),
+            "total": round(elapsed, 3),
             "moyenne_par_occurrence": (
-                round(duree / traitees, 4) if traitees else None
+                round(elapsed / processed, 4) if processed else None
             ),
         },
-        "cas_envoyes_en_revue": envoyes,
+        "cas_envoyes_en_revue": sent,
     }
-    return cas, rapport
+    return cases, report
 
 
 def main() -> None:
-    """Point d'entrée du script de monitoring."""
-    analyseur = argparse.ArgumentParser(description=__doc__)
-    analyseur.add_argument(
+    """Entry point of the monitoring script."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
         "--entree",
+        dest="input_path",
         type=Path,
         default=Path("data/samples/run_prod.jsonl"),
         help="JSONL des occurrences de production.",
     )
-    analyseur.add_argument(
-        "--projet-referentiel", required=True, help="Projet A."
+    parser.add_argument(
+        "--projet-referentiel",
+        dest="reference_project",
+        required=True,
+        help="Projet A.",
     )
-    analyseur.add_argument("--projet-revue", required=True, help="Projet B.")
-    analyseur.add_argument(
+    parser.add_argument(
+        "--projet-revue",
+        dest="review_project",
+        required=True,
+        help="Projet B.",
+    )
+    parser.add_argument(
         "--rapport",
+        dest="report_path",
         type=Path,
         default=None,
         help="Fichier du rapport JSON.",
     )
-    analyseur.add_argument(
+    parser.add_argument(
         "--hors-ligne",
+        dest="offline",
         action="store_true",
         help="Matcher BM25 et juge lexical : aucun appel de modèle.",
     )
-    arguments = analyseur.parse_args()
+    arguments = parser.parse_args()
 
-    config = parametres()
-    kili = creer_client(config)
-    entrees = charger_entrees(
-        kili, arguments.projet_referentiel, statuts=("ACTIF",)
+    config = settings()
+    kili = create_client(config)
+    entries = load_entries(
+        kili, arguments.reference_project, statuses=("ACTIF",)
     )
-    logger.info("{} entrées ACTIF chargées.", len(entrees))
+    logger.info("{} entrées ACTIF chargées.", len(entries))
 
-    cas, rapport = traiter(
-        lire_jsonl(arguments.entree),
-        entrees,
-        construire_matcher(entrees, config, arguments.hors_ligne),
-        construire_juge(config, arguments.hors_ligne),
+    cases, report = process(
+        read_jsonl(arguments.input_path),
+        entries,
+        build_matcher(entries, config, arguments.offline),
+        build_judge(config, arguments.offline),
     )
 
-    external_ids = calculer_identifiants(cas)
-    for envoye, external_id in zip(
-        rapport["cas_envoyes_en_revue"], external_ids, strict=True
+    external_ids = compute_external_ids(cases)
+    for sent, external_id in zip(
+        report["cas_envoyes_en_revue"], external_ids, strict=True
     ):
-        envoye["external_id"] = external_id
-    creer_cas(
+        sent["external_id"] = external_id
+    create_cases(
         kili,
-        arguments.projet_revue,
-        cas,
+        arguments.review_project,
+        cases,
         external_ids,
-        {entree.question_id: entree.answers for entree in entrees},
-        {entree.question_id: entree.question for entree in entrees},
-        config.taille_max_metadata,
+        {entry.question_id: entry.answers for entry in entries},
+        {entry.question_id: entry.question for entry in entries},
+        config.max_metadata_size,
     )
 
-    horodatage = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    rapport = {
-        "horodatage": horodatage,
-        "projet_referentiel": arguments.projet_referentiel,
-        "projet_revue": arguments.projet_revue,
-        "hors_ligne": arguments.hors_ligne,
-        **rapport,
-    }
-    ecrire_json(
-        arguments.rapport or Path(f"reports/monitoring_{horodatage}.json"),
-        rapport,
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    write_json(
+        arguments.report_path or Path(f"reports/monitoring_{stamp}.json"),
+        {
+            "horodatage": stamp,
+            "projet_referentiel": arguments.reference_project,
+            "projet_revue": arguments.review_project,
+            "hors_ligne": arguments.offline,
+            **report,
+        },
     )
 
 

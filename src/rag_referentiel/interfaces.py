@@ -1,141 +1,140 @@
-"""Les deux `json_interface` Kili, en projets TEXT.
+"""The two Kili `json_interface` definitions, for TEXT projects.
 
-Rappel de contrainte : la version 2.142.1 du SDK ne connaît aucun type de
-projet LLM. Les jobs sont donc uniquement des `CLASSIFICATION` et des
-`TRANSCRIPTION`, et aucune clé `level` n'apparaît (elle est propre aux
-projets LLM, absents de cette version).
+Constraint reminder: version 2.142.1 of the SDK knows no LLM project
+type. Jobs are therefore only `CLASSIFICATION` and `TRANSCRIPTION`, and
+no `level` key appears — that key belongs to LLM projects, absent from
+this version.
+
+Job names, category codes and every displayed string stay in French: they
+are the interface the business team reads.
 """
 
-FORMAT_SOURCES = "doc.pdf:12, autre.pdf:3"
+SOURCES_FORMAT = "doc.pdf:12, autre.pdf:3"
 #: Plusieurs pages d'un même document : répéter la page seule, préfixée
 #: par « p », après le document.
-FORMAT_SOURCES_MULTIPAGE = "doc.pdf:p12, p14, autre.pdf:3"
+SOURCES_FORMAT_MULTIPAGE = "doc.pdf:p12, p14, autre.pdf:3"
 #: Repères des formulations, tels qu'affichés sur la carte. Le plafond de
 #: variantes étant de 5 et les repères renumérotés à chaque écriture, la
 #: liste est finie et stable.
-REPERES_FORMULATIONS = ("a1", "a2", "a3", "a4", "a5")
+ANSWER_MARKERS = ("a1", "a2", "a3", "a4", "a5")
 
 
-def _job_radio(
-    instruction: str, categories: dict[str, str], requis: bool
+def _radio_job(
+    instruction: str, categories: dict[str, str], required: bool
 ) -> dict:
-    """Construit un job de classification à choix unique.
+    """Build a single-choice classification job.
 
     Args:
-        instruction: Consigne affichée à l'annotateur.
-        categories: Correspondance code de catégorie -> libellé affiché.
-        requis: Si le job doit être rempli pour pouvoir valider.
+        instruction: Guidance displayed to the annotator.
+        categories: Mapping of category code to displayed label.
+        required: Whether the job must be filled to submit.
 
     Returns:
-        Le dictionnaire de job attendu par Kili.
+        The job dictionary expected by Kili.
     """
     return {
         "mlTask": "CLASSIFICATION",
         "instruction": instruction,
-        "required": 1 if requis else 0,
+        "required": 1 if required else 0,
         "isChild": False,
         "content": {
             "categories": {
-                code: {"name": libelle, "children": []}
-                for code, libelle in categories.items()
+                code: {"name": label, "children": []}
+                for code, label in categories.items()
             },
             "input": "radio",
         },
     }
 
 
-def _job_cases_a_cocher(
-    instruction: str, categories: dict[str, str], requis: bool
+def _checkbox_job(
+    instruction: str, categories: dict[str, str], required: bool
 ) -> dict:
-    """Construit un job de classification à choix multiple.
+    """Build a multiple-choice classification job.
 
     Args:
-        instruction: Consigne affichée à l'annotateur.
-        categories: Correspondance code de catégorie -> libellé affiché.
-        requis: Si le job doit être rempli pour pouvoir valider.
+        instruction: Guidance displayed to the annotator.
+        categories: Mapping of category code to displayed label.
+        required: Whether the job must be filled to submit.
 
     Returns:
-        Le dictionnaire de job attendu par Kili.
+        The job dictionary expected by Kili.
     """
-    job = _job_radio(instruction, categories, requis)
+    job = _radio_job(instruction, categories, required)
     job["content"]["input"] = "checkbox"
     return job
 
 
-def _job_transcription(instruction: str, requis: bool) -> dict:
-    """Construit un job de transcription texte libre.
+def _transcription_job(instruction: str, required: bool) -> dict:
+    """Build a free text transcription job.
 
     Args:
-        instruction: Consigne affichée à l'annotateur.
-        requis: Si le job doit être rempli pour pouvoir valider.
+        instruction: Guidance displayed to the annotator.
+        required: Whether the job must be filled to submit.
 
     Returns:
-        Le dictionnaire de job attendu par Kili.
+        The job dictionary expected by Kili.
     """
     return {
         "mlTask": "TRANSCRIPTION",
         "instruction": instruction,
-        "required": 1 if requis else 0,
+        "required": 1 if required else 0,
         "isChild": False,
         "content": {"input": "textField"},
     }
 
 
-INTERFACE_REFERENTIEL: dict = {
+REFERENCE_INTERFACE: dict = {
     "jobs": {
-        "ENTREE_TOUJOURS_VALIDE": _job_radio(
+        "ENTREE_TOUJOURS_VALIDE": _radio_job(
             instruction=(
                 "Cette entrée du référentiel est-elle toujours valide au "
                 "regard des documents actuels ?"
             ),
             categories={"OUI": "Oui", "NON": "Non"},
-            requis=True,
+            required=True,
         ),
-        "FORMULATION_CIBLE": _job_radio(
+        "FORMULATION_CIBLE": _radio_job(
             instruction=(
                 "Pour corriger une formulation existante, choisir son "
                 "repère tel qu'il apparaît sur la carte, puis écrire le "
                 "texte corrigé ci-dessous. Laisser vide pour ajouter une "
                 "nouvelle formulation."
             ),
-            categories={
-                repere: repere for repere in REPERES_FORMULATIONS
-            },
-            requis=False,
+            categories={marker: marker for marker in ANSWER_MARKERS},
+            required=False,
         ),
-        "REPONSE_VALIDEE": _job_transcription(
+        "REPONSE_VALIDEE": _transcription_job(
             instruction=(
                 "Texte de la formulation : elle remplace la formulation "
                 "désignée ci-dessus, ou s'ajoute aux formulations "
                 "existantes si aucun repère n'est choisi."
             ),
-            requis=False,
+            required=False,
         ),
-        "FORMULATIONS_A_RETIRER": _job_cases_a_cocher(
+        "FORMULATIONS_A_RETIRER": _checkbox_job(
             instruction=(
                 "Repères des formulations à retirer du référentiel "
                 "(plusieurs choix possibles)."
             ),
-            categories={
-                repere: repere for repere in REPERES_FORMULATIONS
-            },
-            requis=False,
+            categories={marker: marker for marker in ANSWER_MARKERS},
+            required=False,
         ),
-        "SOURCES_CORRIGEES": _job_transcription(
+        "SOURCES_CORRIGEES": _transcription_job(
             instruction=(
                 "Liste corrigée des sources, qui **remplace** la liste "
-                f"actuelle. Format « {FORMAT_SOURCES} » ; plusieurs pages "
-                f"d'un même document : « {FORMAT_SOURCES_MULTIPAGE} ». "
+                f"actuelle. Format « {SOURCES_FORMAT} » ; plusieurs pages "
+                f"d'un même document : « {SOURCES_FORMAT_MULTIPAGE} ». "
                 "Laisser vide si rien à changer."
             ),
-            requis=False,
+            required=False,
         ),
     }
 }
 
-INTERFACE_REVUE: dict = {
+REVIEW_INTERFACE: dict = {
     "jobs": {
-        "MEME_QUESTION": _job_radio(
+        "MEME_QUESTION": _radio_job(
             instruction=(
                 "À remplir uniquement si le motif de mise en revue est "
                 "« APPARIEMENT_INCERTAIN » : la question posée est-elle bien "
@@ -143,25 +142,25 @@ INTERFACE_REVUE: dict = {
                 "la carte ?"
             ),
             categories={"OUI": "Oui", "NON": "Non"},
-            requis=False,
+            required=False,
         ),
-        "CANDIDATE_CORRECTE": _job_radio(
+        "CANDIDATE_CORRECTE": _radio_job(
             instruction="La réponse générée est-elle correcte ?",
             categories={
                 "OUI": "Oui",
                 "PRESQUE": "Presque",
                 "NON": "Non",
             },
-            requis=True,
+            required=True,
         ),
-        "VERSION_CORRIGEE": _job_transcription(
+        "VERSION_CORRIGEE": _transcription_job(
             instruction=(
                 "Si « Presque » : écrire ici la bonne formulation de la "
                 "réponse."
             ),
-            requis=False,
+            required=False,
         ),
-        "SOURCES_PERTINENTES": _job_radio(
+        "SOURCES_PERTINENTES": _radio_job(
             instruction=(
                 "Les sources citées soutiennent-elles la réponse ?"
             ),
@@ -170,15 +169,15 @@ INTERFACE_REVUE: dict = {
                 "PARTIEL": "Partiellement",
                 "NON": "Non",
             },
-            requis=True,
+            required=True,
         ),
-        "SOURCES_CORRIGEES": _job_transcription(
+        "SOURCES_CORRIGEES": _transcription_job(
             instruction=(
                 "Liste corrigée des sources, qui **remplace** la liste "
-                f"citée. Format « {FORMAT_SOURCES} » ; plusieurs pages "
-                f"d'un même document : « {FORMAT_SOURCES_MULTIPAGE} »."
+                f"citée. Format « {SOURCES_FORMAT} » ; plusieurs pages "
+                f"d'un même document : « {SOURCES_FORMAT_MULTIPAGE} »."
             ),
-            requis=False,
+            required=False,
         ),
     }
 }

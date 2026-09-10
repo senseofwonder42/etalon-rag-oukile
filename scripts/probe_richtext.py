@@ -1,196 +1,197 @@
-"""Sonde le rendu rich text du serveur Kili avec un asset unique.
+"""Probe the rich text rendering of the Kili server with one asset.
 
-Importe un seul asset qui exerce tout le vocabulaire rich text : titres
-`h1` à `h4`, gras, italique, code, souligné, listes, citation, tableau,
-fonds de couleur et alignements. Sert à constater en cinq minutes ce que
-l'instance rend réellement, avant de construire dessus.
+Imports a single asset exercising the whole rich text vocabulary: `h1`
+to `h4` headings, bold, italic, code, underline, lists, blockquote,
+table, background colours and alignments. It is there to check, in five
+minutes, what the instance actually renders before building on it.
 """
 
 import argparse
 
-from _commun import parametres
+from _commun import settings
 from loguru import logger
 
-from rag_referentiel.client import creer_client
-from rag_referentiel.interfaces import INTERFACE_REFERENTIEL
+from rag_referentiel.client import create_client
+from rag_referentiel.interfaces import REFERENCE_INTERFACE
 from rag_referentiel.richtext import (
-    GenerateurIds,
+    IdGenerator,
     document,
-    noeud_element,
-    noeud_texte,
+    element_node,
+    text_node,
 )
 
 EXTERNAL_ID = "sonde_richtext"
 
 
-def composer_sonde() -> list[dict]:
-    """Compose l'asset de sonde.
+def build_probe_asset() -> list[dict]:
+    """Compose the probe asset.
 
     Returns:
-        Le `json_content` de l'asset.
+        The `json_content` of the asset.
     """
-    generateur = GenerateurIds()
+    generator = IdGenerator()
 
-    def paragraphe(
-        enfants: list[dict], styles: dict[str, str] | None = None
+    def paragraph(
+        children: list[dict], styles: dict[str, str] | None = None
     ) -> dict:
-        return noeud_element("p", enfants, generateur, styles)
+        return element_node("p", children, generator, styles)
 
-    def titre(niveau: str, texte: str) -> dict:
-        return noeud_element(
-            niveau, [noeud_texte(texte, generateur)], generateur
+    def heading(level: str, text: str) -> dict:
+        return element_node(
+            level, [text_node(text, generator)], generator
         )
 
-    def cellule(texte: str, entete: bool = False) -> dict:
-        return noeud_element(
+    def cell(text: str, header: bool = False) -> dict:
+        return element_node(
             "td",
-            [noeud_texte(texte, generateur, {"bold"} if entete else None)],
-            generateur,
-            {"backgroundColor": "#eeeeee"} if entete else None,
+            [text_node(text, generator, {"bold"} if header else None)],
+            generator,
+            {"backgroundColor": "#eeeeee"} if header else None,
         )
 
-    blocs = [
-        titre("h1", "Sonde rich text — h1"),
-        titre("h2", "Sous-titre — h2"),
-        titre("h3", "Sous-titre — h3"),
-        titre("h4", "Sous-titre — h4"),
-        paragraphe(
+    blocks = [
+        heading("h1", "Sonde rich text — h1"),
+        heading("h2", "Sous-titre — h2"),
+        heading("h3", "Sous-titre — h3"),
+        heading("h4", "Sous-titre — h4"),
+        paragraph(
             [
-                noeud_texte("Normal, ", generateur),
-                noeud_texte("gras", generateur, {"bold"}),
-                noeud_texte(", ", generateur),
-                noeud_texte("italique", generateur, {"italic"}),
-                noeud_texte(", ", generateur),
-                noeud_texte("code", generateur, {"code"}),
-                noeud_texte(", ", generateur),
-                noeud_texte("souligné", generateur, {"underline"}),
-                noeud_texte(", ", generateur),
-                noeud_texte(
-                    "gras + italique", generateur, {"bold", "italic"}
+                text_node("Normal, ", generator),
+                text_node("gras", generator, {"bold"}),
+                text_node(", ", generator),
+                text_node("italique", generator, {"italic"}),
+                text_node(", ", generator),
+                text_node("code", generator, {"code"}),
+                text_node(", ", generator),
+                text_node("souligné", generator, {"underline"}),
+                text_node(", ", generator),
+                text_node(
+                    "gras + italique", generator, {"bold", "italic"}
                 ),
-                noeud_texte(".", generateur),
+                text_node(".", generator),
             ]
         ),
-        paragraphe(
-            [noeud_texte("Fond vert clair.", generateur)],
+        paragraph(
+            [text_node("Fond vert clair.", generator)],
             {"backgroundColor": "#e8f5e9", "padding": "4px 8px"},
         ),
-        paragraphe(
-            [noeud_texte("Fond ambre.", generateur)],
+        paragraph(
+            [text_node("Fond ambre.", generator)],
             {"backgroundColor": "#fff3e0", "padding": "4px 8px"},
         ),
-        paragraphe(
-            [noeud_texte("Texte coloré et centré.", generateur)],
+        paragraph(
+            [text_node("Texte coloré et centré.", generator)],
             {"color": "#c62828", "textAlign": "center"},
         ),
-        paragraphe(
-            [noeud_texte("Texte aligné à droite.", generateur)],
+        paragraph(
+            [text_node("Texte aligné à droite.", generator)],
             {"textAlign": "right"},
         ),
-        titre("h3", "Liste à puces"),
-        noeud_element(
+        heading("h3", "Liste à puces"),
+        element_node(
             "ul",
             [
-                noeud_element(
-                    "li", [noeud_texte("Premier point", generateur)],
-                    generateur,
+                element_node(
+                    "li", [text_node("Premier point", generator)],
+                    generator,
                 ),
-                noeud_element(
+                element_node(
                     "li",
                     [
-                        noeud_texte("Deuxième point en ", generateur),
-                        noeud_texte("gras", generateur, {"bold"}),
+                        text_node("Deuxième point en ", generator),
+                        text_node("gras", generator, {"bold"}),
                     ],
-                    generateur,
+                    generator,
                 ),
             ],
-            generateur,
+            generator,
         ),
-        titre("h3", "Liste numérotée"),
-        noeud_element(
+        heading("h3", "Liste numérotée"),
+        element_node(
             "ol",
             [
-                noeud_element(
-                    "li", [noeud_texte("Étape un", generateur)], generateur
+                element_node(
+                    "li", [text_node("Étape un", generator)], generator
                 ),
-                noeud_element(
-                    "li", [noeud_texte("Étape deux", generateur)], generateur
+                element_node(
+                    "li", [text_node("Étape deux", generator)], generator
                 ),
             ],
-            generateur,
+            generator,
         ),
-        titre("h3", "Citation"),
-        noeud_element(
+        heading("h3", "Citation"),
+        element_node(
             "blockquote",
-            [paragraphe([noeud_texte("Une citation encadrée.", generateur)])],
-            generateur,
+            [paragraph([text_node("Une citation encadrée.", generator)])],
+            generator,
             {"borderLeft": "3px solid #9e9e9e", "padding": "4px 8px"},
         ),
-        titre("h3", "Tableau"),
-        noeud_element(
+        heading("h3", "Tableau"),
+        element_node(
             "table",
             [
-                noeud_element(
+                element_node(
                     "thead",
                     [
-                        noeud_element(
+                        element_node(
                             "tr",
                             [
-                                cellule("Document", True),
-                                cellule("Page", True),
+                                cell("Document", True),
+                                cell("Page", True),
                             ],
-                            generateur,
+                            generator,
                         )
                     ],
-                    generateur,
+                    generator,
                 ),
-                noeud_element(
+                element_node(
                     "tbody",
                     [
-                        noeud_element(
+                        element_node(
                             "tr",
                             [
-                                cellule("cg_auto_2024.pdf"),
-                                cellule("12"),
+                                cell("cg_auto_2024.pdf"),
+                                cell("12"),
                             ],
-                            generateur,
+                            generator,
                         ),
-                        noeud_element(
+                        element_node(
                             "tr",
                             [
-                                cellule("cg_habitation_2024.pdf"),
-                                cellule("22"),
+                                cell("cg_habitation_2024.pdf"),
+                                cell("22"),
                             ],
-                            generateur,
+                            generator,
                         ),
                     ],
-                    generateur,
+                    generator,
                 ),
             ],
-            generateur,
+            generator,
         ),
     ]
-    return document(blocs, {"maxWidth": "900px", "margin": "0 auto"})
+    return document(blocks, {"maxWidth": "900px", "margin": "0 auto"})
 
 
 def main() -> None:
-    """Point d'entrée de la sonde."""
-    analyseur = argparse.ArgumentParser(description=__doc__)
-    analyseur.add_argument(
+    """Entry point of the probe."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
         "--project-id",
+        dest="project_id",
         default=None,
         help="Projet TEXT existant ; créé si absent.",
     )
-    arguments = analyseur.parse_args()
+    arguments = parser.parse_args()
 
-    config = parametres()
-    kili = creer_client(config)
+    config = settings()
+    kili = create_client(config)
     project_id = arguments.project_id
     if project_id is None:
         project_id = kili.create_project(
             title="Sonde rich text",
             input_type="TEXT",
-            json_interface=INTERFACE_REFERENTIEL,
+            json_interface=REFERENCE_INTERFACE,
             description="Vérification du rendu rich text côté serveur.",
         )["id"]
         logger.info("Projet de sonde créé : {}", project_id)
@@ -198,7 +199,7 @@ def main() -> None:
     kili.append_many_to_dataset(
         project_id=project_id,
         external_id_array=[EXTERNAL_ID],
-        json_content_array=[composer_sonde()],
+        json_content_array=[build_probe_asset()],
         json_metadata_array=[{"text": "Sonde du vocabulaire rich text."}],
     )
     print(f"Asset « {EXTERNAL_ID} » importé dans le projet {project_id}.")

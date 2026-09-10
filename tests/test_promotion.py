@@ -1,60 +1,57 @@
 import pytest
 
-from rag_referentiel.config import Parametres
+from rag_referentiel.config import Settings
 from rag_referentiel.referentiel import (
-    CibleIntrouvableError,
-    ajouter_variante,
-    charger_entrees,
-    creer_entree,
-    creer_projet,
-    importer_entrees,
-    parser_sources,
-    promouvoir_lot,
-    remplacer_formulation,
-    retirer_formulations,
-    selectionner_variantes,
+    UnknownAnswerMarkerError,
+    add_variant,
+    build_entry,
+    create_project,
+    import_entries,
+    load_entries,
+    parse_sources,
+    promote_batch,
+    remove_answers,
+    replace_answer,
+    select_variants,
 )
-from rag_referentiel.revue import (
-    calculer_identifiants,
-    creer_cas,
-)
-from rag_referentiel.revue import (
-    creer_projet as creer_projet_revue,
-)
-from rag_referentiel.schemas import Answer, CasRevue, Source, Verdict
+from rag_referentiel.revue import compute_external_ids, create_cases
+from rag_referentiel.revue import create_project as create_review_project
+from rag_referentiel.schemas import Answer, ReviewCase, Source, Verdict
 
 QUESTION = "Quel est le délai de déclaration d'un sinistre auto ?"
-REPONSE_METIER = "Le délai est de cinq jours ouvrés après le sinistre."
+BUSINESS_ANSWER = "Le délai est de cinq jours ouvrés après le sinistre."
 
 
 @pytest.fixture
-def config():
-    return Parametres(
+def settings():
+    return Settings(
         kili_api_key="factice",
-        seuil_quasi_doublon=0.85,
-        plafond_variantes=5,
+        near_duplicate_threshold=0.85,
+        variant_cap=5,
     )
 
 
 @pytest.fixture
-def projets(kili, config):
-    id_a = creer_projet(kili, "Référentiel")
-    entree = creer_entree(
+def projects(kili, settings):
+    reference_id = create_project(kili, "Référentiel")
+    entry = build_entry(
         question=QUESTION,
-        textes=[REPONSE_METIER],
+        texts=[BUSINESS_ANSWER],
         sources=[Source(doc_id="cg_auto.pdf", page=12)],
-        auteur="c.durand",
+        author="c.durand",
         date="2026-03-11",
     )
-    importer_entrees(kili, id_a, [entree], config.taille_max_metadata)
-    id_b = creer_projet_revue(kili, "Revue")
-    return id_a, id_b, entree.question_id
+    import_entries(
+        kili, reference_id, [entry], settings.max_metadata_size
+    )
+    review_id = create_review_project(kili, "Revue")
+    return reference_id, review_id, entry.question_id
 
 
-def deposer_cas(kili, id_b, config, **surcharges):
-    cas = CasRevue(
+def submit_case(kili, review_id, settings, **overrides):
+    case = ReviewCase(
         **{
-            "question_id": surcharges.pop("question_id"),
+            "question_id": overrides.pop("question_id"),
             "run_id": "run_42",
             "motif": "DIVERGENCE",
             "question": QUESTION,
@@ -64,47 +61,59 @@ def deposer_cas(kili, id_b, config, **surcharges):
                 conforme=False, confiance=0.4, motif="test"
             ),
             "score_appariement": 0.9,
-            **surcharges,
+            **overrides,
         }
     )
-    identifiants = calculer_identifiants([cas])
-    creer_cas(
-        kili, id_b, [cas], identifiants, {}, {}, config.taille_max_metadata
+    identifiers = compute_external_ids([case])
+    create_cases(
+        kili,
+        review_id,
+        [case],
+        identifiers,
+        {},
+        {},
+        settings.max_metadata_size,
     )
-    return identifiants[0]
+    return identifiers[0]
 
 
-def test_verdict_oui_ajoute_une_variante(kili, config, projets):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
+def test_verdict_yes_adds_a_variant(kili, settings, projects):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]},
             "SOURCES_PERTINENTES": {"categories": [{"name": "OUI"}]},
         },
-        auteur="m.leroy@exemple.fr",
+        author="m.leroy@exemple.fr",
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    assert rapport.promus == 1
-    assert rapport.variantes_ajoutees == 1
-    entree = charger_entrees(kili, id_a)[0]
-    assert len(entree.answers) == 2
-    assert entree.answers[1].origine == "rag_valide"
-    assert entree.answers[1].auteur == "m.leroy@exemple.fr"
-    assert entree.answers[1].run_id == "run_42"
-    assert entree.version == 2
-    assert kili.metadata(id_b, external_id)["statut_revue"] == "PROMU"
+    assert report.promoted == 1
+    assert report.variants_added == 1
+    entry = load_entries(kili, reference_id)[0]
+    assert len(entry.answers) == 2
+    assert entry.answers[1].origine == "rag_valide"
+    assert entry.answers[1].auteur == "m.leroy@exemple.fr"
+    assert entry.answers[1].run_id == "run_42"
+    assert entry.version == 2
+    assert kili.metadata(review_id, external_id)["statut_revue"] == "PROMU"
 
 
-def test_verdict_presque_promeut_la_version_corrigee(kili, config, projets):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
+def test_verdict_almost_promotes_the_corrected_version(
+    kili, settings, projects
+):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "PRESQUE"}]},
@@ -115,18 +124,22 @@ def test_verdict_presque_promeut_la_version_corrigee(kili, config, projets):
         },
     )
 
-    promouvoir_lot(kili, id_a, id_b, config)
+    promote_batch(kili, reference_id, review_id, settings)
 
-    entree = charger_entrees(kili, id_a)[0]
-    assert entree.answers[1].origine == "rag_corrige"
-    assert "hors vol" in entree.answers[1].text
+    entry = load_entries(kili, reference_id)[0]
+    assert entry.answers[1].origine == "rag_corrige"
+    assert "hors vol" in entry.answers[1].text
 
 
-def test_verdict_presque_sans_correction_n_ecrit_rien(kili, config, projets):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
+def test_almost_without_a_correction_writes_nothing(
+    kili, settings, projects
+):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "PRESQUE"}]},
@@ -134,18 +147,20 @@ def test_verdict_presque_sans_correction_n_ecrit_rien(kili, config, projets):
         },
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    assert rapport.rejetes == 1
-    assert len(charger_entrees(kili, id_a)[0].answers) == 1
-    assert kili.metadata(id_b, external_id)["statut_revue"] == "REJETE"
+    assert report.rejected == 1
+    assert len(load_entries(kili, reference_id)[0].answers) == 1
+    assert kili.metadata(review_id, external_id)["statut_revue"] == "REJETE"
 
 
-def test_verdict_non_n_ecrit_rien(kili, config, projets):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
+def test_verdict_no_writes_nothing(kili, settings, projects):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "NON"}]},
@@ -153,28 +168,28 @@ def test_verdict_non_n_ecrit_rien(kili, config, projets):
         },
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    entree = charger_entrees(kili, id_a)[0]
-    assert rapport.rejetes == 1
-    assert len(entree.answers) == 1
-    assert entree.version == 1
-    assert kili.metadata(id_b, external_id)["statut_revue"] == "REJETE"
+    entry = load_entries(kili, reference_id)[0]
+    assert report.rejected == 1
+    assert len(entry.answers) == 1
+    assert entry.version == 1
+    assert kili.metadata(review_id, external_id)["statut_revue"] == "REJETE"
 
 
-def test_meme_question_non_cree_une_nouvelle_entree(kili, config, projets):
-    id_a, id_b, _ = projets
-    external_id = deposer_cas(
+def test_same_question_no_creates_a_new_entry(kili, settings, projects):
+    reference_id, review_id, _ = projects
+    external_id = submit_case(
         kili,
-        id_b,
-        config,
+        review_id,
+        settings,
         question_id="q_nouvelle_000",
         motif="APPARIEMENT_INCERTAIN",
         question="Quel délai pour déclarer un vol de véhicule ?",
         question_id_candidat="q_existante",
     )
-    kili.ajouter_label(
-        id_b,
+    kili.add_label(
+        review_id,
         external_id,
         {
             "MEME_QUESTION": {"categories": [{"name": "NON"}]},
@@ -183,40 +198,46 @@ def test_meme_question_non_cree_une_nouvelle_entree(kili, config, projets):
         },
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    assert rapport.nouvelles_entrees == 1
-    questions = {e.question for e in charger_entrees(kili, id_a)}
+    assert report.new_entries == 1
+    questions = {e.question for e in load_entries(kili, reference_id)}
     assert "Quel délai pour déclarer un vol de véhicule ?" in questions
 
 
-def test_cas_incertain_sans_reponse_reste_en_attente(kili, config, projets):
-    id_a, id_b, _ = projets
-    external_id = deposer_cas(
+def test_an_uncertain_case_without_an_answer_stays_pending(
+    kili, settings, projects
+):
+    reference_id, review_id, _ = projects
+    external_id = submit_case(
         kili,
-        id_b,
-        config,
+        review_id,
+        settings,
         question_id="q_nouvelle_000",
         motif="APPARIEMENT_INCERTAIN",
         question_id_candidat="q_existante",
     )
-    kili.ajouter_label(
-        id_b,
+    kili.add_label(
+        review_id,
         external_id,
         {"CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]}},
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    assert rapport.ignores == 1
-    assert kili.metadata(id_b, external_id)["statut_revue"] == "EN_ATTENTE"
+    assert report.skipped == 1
+    assert (
+        kili.metadata(review_id, external_id)["statut_revue"] == "EN_ATTENTE"
+    )
 
 
-def test_promotion_idempotente(kili, config, projets):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
+def test_promotion_is_idempotent(kili, settings, projects):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]},
@@ -224,28 +245,28 @@ def test_promotion_idempotente(kili, config, projets):
         },
     )
 
-    promouvoir_lot(kili, id_a, id_b, config)
-    apres_un = charger_entrees(kili, id_a)[0]
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-    apres_deux = charger_entrees(kili, id_a)[0]
+    promote_batch(kili, reference_id, review_id, settings)
+    after_first = load_entries(kili, reference_id)[0]
+    report = promote_batch(kili, reference_id, review_id, settings)
+    after_second = load_entries(kili, reference_id)[0]
 
-    assert rapport.cas_lus == 0
-    assert apres_deux.model_dump() == apres_un.model_dump()
+    assert report.cases_read == 0
+    assert after_second.model_dump() == after_first.model_dump()
 
 
-def test_variante_identique_rejetee_comme_quasi_doublon(
-    kili, config, projets
+def test_an_identical_variant_is_rejected_as_a_near_duplicate(
+    kili, settings, projects
 ):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
         kili,
-        id_b,
-        config,
+        review_id,
+        settings,
         question_id=question_id,
-        candidate_answer=REPONSE_METIER,
+        candidate_answer=BUSINESS_ANSWER,
     )
-    kili.ajouter_label(
-        id_b,
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]},
@@ -253,19 +274,23 @@ def test_variante_identique_rejetee_comme_quasi_doublon(
         },
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    entree = charger_entrees(kili, id_a)[0]
-    assert rapport.variantes_ajoutees == 0
-    assert len(entree.answers) == 1
-    assert entree.version == 1
+    entry = load_entries(kili, reference_id)[0]
+    assert report.variants_added == 0
+    assert len(entry.answers) == 1
+    assert entry.version == 1
 
 
-def test_sources_corrigees_remplacent_les_sources(kili, config, projets):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
+def test_corrected_sources_replace_the_source_list(
+    kili, settings, projects
+):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]},
@@ -274,20 +299,22 @@ def test_sources_corrigees_remplacent_les_sources(kili, config, projets):
         },
     )
 
-    promouvoir_lot(kili, id_a, id_b, config)
+    promote_batch(kili, reference_id, review_id, settings)
 
-    entree = charger_entrees(kili, id_a)[0]
-    assert [(s.doc_id, s.page) for s in entree.sources] == [
+    entry = load_entries(kili, reference_id)[0]
+    assert [(s.doc_id, s.page) for s in entry.sources] == [
         ("cg_auto.pdf", 14),
         ("guide.pdf", 3),
     ]
 
 
-def test_desaccord_juge_metier_compte(kili, config, projets):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
+def test_judge_business_disagreement_is_counted(kili, settings, projects):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
         external_id,
         {
             "CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]},
@@ -295,113 +322,399 @@ def test_desaccord_juge_metier_compte(kili, config, projets):
         },
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    assert rapport.desaccords_juge_metier == 1
+    assert report.judge_business_disagreements == 1
 
 
-def test_entree_toujours_valide_repasse_l_entree_en_actif(
-    kili, config, projets
+def test_still_valid_yes_puts_the_entry_back_to_active(
+    kili, settings, projects
 ):
-    id_a, id_b, question_id = projets
-    metadata = kili.metadata(id_a, question_id)
-    metadata["statut"] = "A_REVERIFIER"
-    kili.ajouter_label(
-        id_a,
+    reference_id, review_id, question_id = projects
+    kili.metadata(reference_id, question_id)["statut"] = "A_REVERIFIER"
+    kili.add_label(
+        reference_id,
         question_id,
         {"ENTREE_TOUJOURS_VALIDE": {"categories": [{"name": "OUI"}]}},
         date="2026-08-01",
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    entree = charger_entrees(kili, id_a)[0]
-    assert rapport.entrees_revalidees == 1
-    assert entree.statut == "ACTIF"
-    assert entree.derniere_verification == "2026-08-01"
+    entry = load_entries(kili, reference_id)[0]
+    assert report.entries_revalidated == 1
+    assert entry.statut == "ACTIF"
+    assert entry.derniere_verification == "2026-08-01"
 
     # Rejouer ne doit plus rien changer.
-    avant = entree.model_dump()
-    promouvoir_lot(kili, id_a, id_b, config)
-    assert charger_entrees(kili, id_a)[0].model_dump() == avant
+    before = entry.model_dump()
+    promote_batch(kili, reference_id, review_id, settings)
+    assert load_entries(kili, reference_id)[0].model_dump() == before
 
 
-def test_entree_toujours_valide_non_archive(kili, config, projets):
-    id_a, id_b, question_id = projets
-    kili.ajouter_label(
-        id_a,
+def test_still_valid_no_archives_the_entry(kili, settings, projects):
+    reference_id, review_id, question_id = projects
+    kili.add_label(
+        reference_id,
         question_id,
         {"ENTREE_TOUJOURS_VALIDE": {"categories": [{"name": "NON"}]}},
     )
 
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
+    report = promote_batch(kili, reference_id, review_id, settings)
 
-    assert rapport.entrees_archivees == 1
-    assert charger_entrees(kili, id_a)[0].statut == "ARCHIVE"
+    assert report.entries_archived == 1
+    assert load_entries(kili, reference_id)[0].statut == "ARCHIVE"
+
+
+def test_the_audit_trail_is_not_read_back_as_an_arbitration(
+    kili, settings, projects
+):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
+        external_id,
+        {
+            "CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]},
+            "SOURCES_PERTINENTES": {"categories": [{"name": "OUI"}]},
+        },
+    )
+    promote_batch(kili, reference_id, review_id, settings)
+
+    labels = kili.data[reference_id][question_id]["labels"]
+    assert labels and labels[-1]["labelType"] == "INFERENCE"
+    assert labels[-1]["jsonResponse"]["REPONSE_VALIDEE"]["text"]
+
+
+# --- option A : correction ciblée d'une formulation -------------------
+def _reference_label(**jobs):
+    response = {"ENTREE_TOUJOURS_VALIDE": {"categories": [{"name": "OUI"}]}}
+    if "marker" in jobs:
+        response["FORMULATION_CIBLE"] = {
+            "categories": [{"name": jobs["marker"]}]
+        }
+    if "text" in jobs:
+        response["REPONSE_VALIDEE"] = {"text": jobs["text"]}
+    if "remove" in jobs:
+        response["FORMULATIONS_A_RETIRER"] = {
+            "categories": [{"name": m} for m in jobs["remove"]]
+        }
+    if "sources" in jobs:
+        response["SOURCES_CORRIGEES"] = {"text": jobs["sources"]}
+    return response
+
+
+@pytest.fixture
+def entry_with_three_answers(kili, settings):
+    reference_id = create_project(kili, "Référentiel")
+    entry = build_entry(
+        question=QUESTION,
+        texts=[
+            "Le délai est de cinq jours ouvrés après le sinistre.",
+            "Vous disposez de cinq jours ouvrés pour déclarer.",
+            "La déclaration intervient sous cinq jours ouvrés.",
+        ],
+        sources=[Source(doc_id="cg_auto.pdf", page=12)],
+        author="c.durand",
+        date="2026-03-11",
+    )
+    import_entries(
+        kili, reference_id, [entry], settings.max_metadata_size
+    )
+    review_id = create_review_project(kili, "Revue")
+    return reference_id, review_id, entry.question_id
+
+
+def test_a_targeted_replacement_fixes_the_right_answer(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(
+            marker="a2", text="Vous disposez de cinq jours ouvrés pleins."
+        ),
+        author="c.durand@exemple.fr",
+        date="2026-08-01",
+    )
+
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    entry = load_entries(kili, reference_id)[0]
+    assert report.answers_replaced == 1
+    assert len(entry.answers) == 3
+    assert entry.answers[1].id == "a2"
+    assert entry.answers[1].text.endswith("cinq jours ouvrés pleins.")
+    assert entry.answers[1].origine == "metier"
+    assert entry.answers[1].auteur == "c.durand@exemple.fr"
+    assert entry.answers[0].text.startswith("Le délai est de")
+    assert entry.version == 2
+
+
+def test_a_light_correction_is_no_longer_lost(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    # Texte quasi identique à a2 : sans repère il serait écarté comme
+    # quasi-doublon ; avec le repère, il remplace bien la formulation.
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(
+            marker="a2", text="Vous disposez de cinq jours ouvrés pour agir."
+        ),
+    )
+
+    promote_batch(kili, reference_id, review_id, settings)
+
+    entry = load_entries(kili, reference_id)[0]
+    assert entry.answers[1].text.endswith("pour agir.")
+
+
+def test_without_a_marker_the_text_is_added(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(
+            text="Comptez cinq jours ouvrables, dimanche exclu, dès "
+            "connaissance du fait générateur."
+        ),
+    )
+
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    entry = load_entries(kili, reference_id)[0]
+    assert report.variants_added == 1
+    assert len(entry.answers) == 4
+    assert entry.answers[3].id == "a4"
+
+
+def test_an_unknown_marker_is_reported_without_crashing(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(marker="a5", text="Un texte quelconque."),
+    )
+
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    assert report.answers_replaced == 0
+    assert report.unknown_markers
+    assert "a5" in report.unknown_markers[0]
+    assert len(load_entries(kili, reference_id)[0].answers) == 3
+
+
+def test_multiple_removal_and_renumbering(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id, question_id, _reference_label(remove=["a1", "a3"])
+    )
+
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    entry = load_entries(kili, reference_id)[0]
+    assert report.answers_removed == 2
+    assert [a.id for a in entry.answers] == ["a1"]
+    assert entry.answers[0].text.startswith("Vous disposez")
+
+
+def test_two_successive_labels_are_both_consumed(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(marker="a1", text="Première correction ouvrés."),
+        date="2026-08-01",
+    )
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(marker="a3", text="Seconde correction ouvrés."),
+        date="2026-08-02",
+    )
+
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    entry = load_entries(kili, reference_id)[0]
+    assert report.reference_labels_consumed == 2
+    assert report.answers_replaced == 2
+    assert entry.answers[0].text == "Première correction ouvrés."
+    assert entry.answers[2].text == "Seconde correction ouvrés."
+    assert entry.derniere_promotion.startswith("2026-08-02")
+
+
+def test_the_watermark_makes_the_campaign_idempotent(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(marker="a2", text="Une correction ouvrés."),
+    )
+
+    promote_batch(kili, reference_id, review_id, settings)
+    after_first = load_entries(kili, reference_id)[0].model_dump()
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    assert report.reference_labels_consumed == 0
+    assert load_entries(kili, reference_id)[0].model_dump() == after_first
+
+
+def test_a_label_after_the_watermark_is_taken(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(marker="a2", text="Correction ouvrés initiale."),
+        date="2026-08-01",
+    )
+    promote_batch(kili, reference_id, review_id, settings)
+
+    kili.add_label(
+        reference_id,
+        question_id,
+        _reference_label(marker="a2", text="Correction ouvrés suivante."),
+        date="2026-08-05",
+    )
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    assert report.reference_labels_consumed == 1
+    assert (
+        load_entries(kili, reference_id)[0].answers[1].text
+        == "Correction ouvrés suivante."
+    )
+
+
+def test_corrected_sources_report_the_removed_ones(
+    kili, settings, entry_with_three_answers
+):
+    reference_id, review_id, question_id = entry_with_three_answers
+    kili.add_label(
+        reference_id, question_id, _reference_label(sources="guide.pdf:5")
+    )
+
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    assert report.removed_sources == [f"{question_id} : cg_auto.pdf:12"]
 
 
 # --- règles pures ----------------------------------------------------
-def _reponse(identifiant, texte, origine="rag_valide"):
+def _answer(identifier, text, origin="rag_valide"):
     return Answer(
-        id=identifiant,
-        text=texte,
-        origine=origine,
+        id=identifier,
+        text=text,
+        origine=origin,
         auteur="m.leroy",
         date="2026-07-18",
     )
 
 
-def test_plafond_de_variantes(config):
-    entree = creer_entree(
-        QUESTION,
-        [REPONSE_METIER],
-        [],
-        "c.durand",
-        "2026-03-11",
+def test_the_variant_cap(settings):
+    entry = build_entry(
+        QUESTION, [BUSINESS_ANSWER], [], "c.durand", "2026-03-11"
     )
-    for indice in range(6):
-        ajoutee = ajouter_variante(
-            entree,
-            texte=f"Formulation numéro {indice} totalement distincte "
-            f"mot{indice} autre{indice} encore{indice}",
-            origine="rag_valide",
-            auteur="m.leroy",
+    for index in range(6):
+        added = add_variant(
+            entry,
+            text=f"Formulation numéro {index} totalement distincte "
+            f"mot{index} autre{index} encore{index}",
+            origin="rag_valide",
+            author="m.leroy",
             date="2026-07-18",
-            run_id=f"run_{indice}",
-            seuil_quasi_doublon=config.seuil_quasi_doublon,
-            plafond=config.plafond_variantes,
+            run_id=f"run_{index}",
+            near_duplicate_threshold=settings.near_duplicate_threshold,
+            cap=settings.variant_cap,
         )
-        assert ajoutee or len(entree.answers) == config.plafond_variantes
-    assert len(entree.answers) == config.plafond_variantes
-    assert entree.answers[0].origine == "metier"
+        assert added or len(entry.answers) == settings.variant_cap
+    assert len(entry.answers) == settings.variant_cap
+    assert entry.answers[0].origine == "metier"
 
 
-def test_selection_conserve_la_formulation_metier():
-    reponses = [
-        _reponse("a1", "alpha beta gamma", origine="metier"),
-        _reponse("a2", "alpha beta delta"),
-        _reponse("a3", "epsilon zeta eta"),
+def test_selection_keeps_the_business_wording():
+    answers = [
+        _answer("a1", "alpha beta gamma", origin="metier"),
+        _answer("a2", "alpha beta delta"),
+        _answer("a3", "epsilon zeta eta"),
     ]
-    retenues = selectionner_variantes(reponses, 2)
-    assert [r.id for r in retenues] == ["a1", "a3"]
+    kept = select_variants(answers, 2)
+    assert [a.id for a in kept] == ["a1", "a3"]
 
 
-def test_variante_vide_ignoree(config):
-    entree = creer_entree(QUESTION, [REPONSE_METIER], [], "c.d", "2026-01-01")
-    assert not ajouter_variante(
-        entree,
-        texte="   ",
-        origine="rag_valide",
-        auteur="m.leroy",
+def test_an_empty_variant_is_ignored(settings):
+    entry = build_entry(
+        QUESTION, [BUSINESS_ANSWER], [], "c.d", "2026-01-01"
+    )
+    assert not add_variant(
+        entry,
+        text="   ",
+        origin="rag_valide",
+        author="m.leroy",
         date="2026-07-18",
         run_id=None,
-        seuil_quasi_doublon=config.seuil_quasi_doublon,
-        plafond=config.plafond_variantes,
+        near_duplicate_threshold=settings.near_duplicate_threshold,
+        cap=settings.variant_cap,
     )
 
 
-def test_parser_sources_tolerant():
-    sources, illisibles = parser_sources(
+def test_replacing_an_answer_without_a_change():
+    entry = build_entry(QUESTION, ["Texte."], [], "c.d", "2026-01-01")
+    assert not replace_answer(
+        entry, "a1", "Texte.", "m.leroy", "2026-07-18", 0.85
+    )
+
+
+def test_replacing_an_unknown_marker():
+    entry = build_entry(QUESTION, ["Texte."], [], "c.d", "2026-01-01")
+    with pytest.raises(UnknownAnswerMarkerError, match="a3"):
+        replace_answer(
+            entry, "a3", "Autre.", "m.leroy", "2026-07-18", 0.85
+        )
+
+
+def test_removing_the_last_answer_is_refused():
+    entry = build_entry(QUESTION, ["Texte."], [], "c.d", "2026-01-01")
+    removed, unknown = remove_answers(entry, ["a1"])
+    assert removed == []
+    assert unknown == []
+    assert len(entry.answers) == 1
+
+
+def test_removing_an_unknown_marker_is_reported():
+    entry = build_entry(
+        QUESTION, ["Un.", "Deux."], [], "c.d", "2026-01-01"
+    )
+    removed, unknown = remove_answers(entry, ["a2", "a9"])
+    assert removed == ["Deux."]
+    assert unknown == ["a9"]
+
+
+def test_renumbering_after_a_removal():
+    entry = build_entry(
+        QUESTION, ["Un.", "Deux.", "Trois."], [], "c.d", "2026-01-01"
+    )
+    remove_answers(entry, ["a2"])
+    assert [a.id for a in entry.answers] == ["a1", "a2"]
+    assert [a.text for a in entry.answers] == ["Un.", "Trois."]
+
+
+def test_tolerant_source_parsing():
+    sources, unreadable = parse_sources(
         "cg_auto.pdf:12, guide.pdf, autre.pdf:page, , cg_hab.pdf:3"
     )
     assert [(s.doc_id, s.page) for s in sources] == [
@@ -409,307 +722,21 @@ def test_parser_sources_tolerant():
         ("guide.pdf", None),
         ("cg_hab.pdf", 3),
     ]
-    assert illisibles == ["autre.pdf:page"]
+    assert unreadable == ["autre.pdf:page"]
 
 
-def test_la_piste_d_audit_n_est_pas_relue_comme_un_arbitrage(
-    kili, config, projets
-):
-    id_a, id_b, question_id = projets
-    external_id = deposer_cas(kili, id_b, config, question_id=question_id)
-    kili.ajouter_label(
-        id_b,
-        external_id,
-        {
-            "CANDIDATE_CORRECTE": {"categories": [{"name": "OUI"}]},
-            "SOURCES_PERTINENTES": {"categories": [{"name": "OUI"}]},
-        },
-    )
-    promouvoir_lot(kili, id_a, id_b, config)
-
-    labels = kili.donnees[id_a][question_id]["labels"]
-    assert labels and labels[-1]["labelType"] == "INFERENCE"
-    assert labels[-1]["jsonResponse"]["REPONSE_VALIDEE"]["text"]
-
-
-# --- option A : correction ciblée d'une formulation -------------------
-def _label_referentiel(**jobs):
-    reponse = {"ENTREE_TOUJOURS_VALIDE": {"categories": [{"name": "OUI"}]}}
-    if "cible" in jobs:
-        reponse["FORMULATION_CIBLE"] = {
-            "categories": [{"name": jobs["cible"]}]
-        }
-    if "texte" in jobs:
-        reponse["REPONSE_VALIDEE"] = {"text": jobs["texte"]}
-    if "retirer" in jobs:
-        reponse["FORMULATIONS_A_RETIRER"] = {
-            "categories": [{"name": r} for r in jobs["retirer"]]
-        }
-    if "sources" in jobs:
-        reponse["SOURCES_CORRIGEES"] = {"text": jobs["sources"]}
-    return reponse
-
-
-@pytest.fixture
-def entree_a_trois_formulations(kili, config):
-    id_a = creer_projet(kili, "Référentiel")
-    entree = creer_entree(
-        question=QUESTION,
-        textes=[
-            "Le délai est de cinq jours ouvrés après le sinistre.",
-            "Vous disposez de cinq jours ouvrés pour déclarer.",
-            "La déclaration intervient sous cinq jours ouvrés.",
-        ],
-        sources=[Source(doc_id="cg_auto.pdf", page=12)],
-        auteur="c.durand",
-        date="2026-03-11",
-    )
-    importer_entrees(kili, id_a, [entree], config.taille_max_metadata)
-    id_b = creer_projet_revue(kili, "Revue")
-    return id_a, id_b, entree.question_id
-
-
-def test_remplacement_cible_corrige_la_bonne_formulation(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(
-            cible="a2", texte="Vous disposez de cinq jours ouvrés pleins."
-        ),
-        auteur="c.durand@exemple.fr",
-        date="2026-08-01",
-    )
-
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    entree = charger_entrees(kili, id_a)[0]
-    assert rapport.formulations_remplacees == 1
-    assert len(entree.answers) == 3
-    assert entree.answers[1].id == "a2"
-    assert entree.answers[1].text.endswith("cinq jours ouvrés pleins.")
-    assert entree.answers[1].origine == "metier"
-    assert entree.answers[1].auteur == "c.durand@exemple.fr"
-    assert entree.answers[0].text.startswith("Le délai est de")
-    assert entree.version == 2
-
-
-def test_correction_legere_n_est_plus_perdue(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    # Texte quasi identique à a2 : sans repère il serait écarté comme
-    # quasi-doublon ; avec le repère, il remplace bien la formulation.
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(
-            cible="a2", texte="Vous disposez de cinq jours ouvrés pour agir."
-        ),
-    )
-
-    promouvoir_lot(kili, id_a, id_b, config)
-
-    entree = charger_entrees(kili, id_a)[0]
-    assert entree.answers[1].text.endswith("pour agir.")
-
-
-def test_sans_repere_le_texte_est_ajoute(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(
-            texte="Comptez cinq jours ouvrables, dimanche exclu, dès "
-            "connaissance du fait générateur."
-        ),
-    )
-
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    entree = charger_entrees(kili, id_a)[0]
-    assert rapport.variantes_ajoutees == 1
-    assert len(entree.answers) == 4
-    assert entree.answers[3].id == "a4"
-
-
-def test_repere_introuvable_signale_sans_planter(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(cible="a5", texte="Un texte quelconque."),
-    )
-
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    assert rapport.formulations_remplacees == 0
-    assert rapport.cibles_introuvables
-    assert "a5" in rapport.cibles_introuvables[0]
-    assert len(charger_entrees(kili, id_a)[0].answers) == 3
-
-
-def test_retrait_multiple_et_renumerotation(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a, question_id, _label_referentiel(retirer=["a1", "a3"])
-    )
-
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    entree = charger_entrees(kili, id_a)[0]
-    assert rapport.formulations_retirees == 2
-    assert [r.id for r in entree.answers] == ["a1"]
-    assert entree.answers[0].text.startswith("Vous disposez")
-
-
-def test_deux_labels_successifs_sont_tous_consommes(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(cible="a1", texte="Première correction ouvrés."),
-        date="2026-08-01",
-    )
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(cible="a3", texte="Seconde correction ouvrés."),
-        date="2026-08-02",
-    )
-
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    entree = charger_entrees(kili, id_a)[0]
-    assert rapport.labels_referentiel_consommes == 2
-    assert rapport.formulations_remplacees == 2
-    assert entree.answers[0].text == "Première correction ouvrés."
-    assert entree.answers[2].text == "Seconde correction ouvrés."
-    assert entree.derniere_promotion.startswith("2026-08-02")
-
-
-def test_le_filigrane_rend_la_campagne_idempotente(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(cible="a2", texte="Une correction ouvrés."),
-    )
-
-    promouvoir_lot(kili, id_a, id_b, config)
-    apres_un = charger_entrees(kili, id_a)[0].model_dump()
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    assert rapport.labels_referentiel_consommes == 0
-    assert charger_entrees(kili, id_a)[0].model_dump() == apres_un
-
-
-def test_un_label_posterieur_au_filigrane_est_repris(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(cible="a2", texte="Correction ouvrés initiale."),
-        date="2026-08-01",
-    )
-    promouvoir_lot(kili, id_a, id_b, config)
-
-    kili.ajouter_label(
-        id_a,
-        question_id,
-        _label_referentiel(cible="a2", texte="Correction ouvrés suivante."),
-        date="2026-08-05",
-    )
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    assert rapport.labels_referentiel_consommes == 1
-    assert (
-        charger_entrees(kili, id_a)[0].answers[1].text
-        == "Correction ouvrés suivante."
-    )
-
-
-def test_sources_corrigees_signalent_les_sources_retirees(
-    kili, config, entree_a_trois_formulations
-):
-    id_a, id_b, question_id = entree_a_trois_formulations
-    kili.ajouter_label(
-        id_a, question_id, _label_referentiel(sources="guide.pdf:5")
-    )
-
-    rapport = promouvoir_lot(kili, id_a, id_b, config)
-
-    assert rapport.sources_retirees == [f"{question_id} : cg_auto.pdf:12"]
-
-
-# --- règles pures : remplacement, retrait, sources multipages ---------
-def test_remplacer_formulation_sans_changement():
-    entree = creer_entree(QUESTION, ["Texte."], [], "c.d", "2026-01-01")
-    assert not remplacer_formulation(
-        entree, "a1", "Texte.", "m.leroy", "2026-07-18", 0.85
-    )
-
-
-def test_remplacer_formulation_cible_inconnue():
-    entree = creer_entree(QUESTION, ["Texte."], [], "c.d", "2026-01-01")
-    with pytest.raises(CibleIntrouvableError, match="a3"):
-        remplacer_formulation(
-            entree, "a3", "Autre.", "m.leroy", "2026-07-18", 0.85
-        )
-
-
-def test_retirer_la_derniere_formulation_est_refuse():
-    entree = creer_entree(QUESTION, ["Texte."], [], "c.d", "2026-01-01")
-    retires, introuvables = retirer_formulations(entree, ["a1"])
-    assert retires == []
-    assert introuvables == []
-    assert len(entree.answers) == 1
-
-
-def test_retirer_un_repere_inconnu_est_signale():
-    entree = creer_entree(
-        QUESTION, ["Un.", "Deux."], [], "c.d", "2026-01-01"
-    )
-    retires, introuvables = retirer_formulations(entree, ["a2", "a9"])
-    assert retires == ["Deux."]
-    assert introuvables == ["a9"]
-
-
-def test_renumerotation_apres_retrait():
-    entree = creer_entree(
-        QUESTION, ["Un.", "Deux.", "Trois."], [], "c.d", "2026-01-01"
-    )
-    retirer_formulations(entree, ["a2"])
-    assert [r.id for r in entree.answers] == ["a1", "a2"]
-    assert [r.text for r in entree.answers] == ["Un.", "Trois."]
-
-
-def test_sources_plusieurs_pages_d_un_meme_document():
-    sources, illisibles = parser_sources("doc1.pdf:p12, p14, p31")
+def test_several_pages_of_the_same_document():
+    sources, unreadable = parse_sources("doc1.pdf:p12, p14, p31")
     assert [(s.doc_id, s.page) for s in sources] == [
         ("doc1.pdf", 12),
         ("doc1.pdf", 14),
         ("doc1.pdf", 31),
     ]
-    assert illisibles == []
+    assert unreadable == []
 
 
-def test_sources_pages_multiples_puis_changement_de_document():
-    sources, _ = parser_sources("doc1.pdf:p12, p14, autre.pdf:2, p7")
+def test_multiple_pages_then_a_document_change():
+    sources, _ = parse_sources("doc1.pdf:p12, p14, autre.pdf:2, p7")
     assert [(s.doc_id, s.page) for s in sources] == [
         ("doc1.pdf", 12),
         ("doc1.pdf", 14),
@@ -718,7 +745,7 @@ def test_sources_pages_multiples_puis_changement_de_document():
     ]
 
 
-def test_page_seule_sans_document_precedent_est_illisible():
-    sources, illisibles = parser_sources("p12, doc.pdf:3")
+def test_a_standalone_page_without_a_document_is_unreadable():
+    sources, unreadable = parse_sources("p12, doc.pdf:3")
     assert [(s.doc_id, s.page) for s in sources] == [("doc.pdf", 3)]
-    assert illisibles == ["p12"]
+    assert unreadable == ["p12"]

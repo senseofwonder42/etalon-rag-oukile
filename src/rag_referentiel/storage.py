@@ -1,14 +1,15 @@
-"""Écriture des assets Kili, avec repli si la metadata est trop volumineuse.
+"""Asset writing, with a fallback when the metadata is too large.
 
-La taille maximale d'un `json_metadata` n'est pas documentée par Kili.
-Toute écriture passe donc par cette couche : si la charge dépasse le seuil
-configuré, ou si le serveur la refuse pour cause de volume, on bascule sur
-un repli documenté — les textes restent lisibles dans le `json_content`,
-la metadata est réduite à ce qui sert à retrouver et à piloter l'entrée.
+The maximum size of a `json_metadata` is not documented by Kili. Every
+write therefore goes through this layer: when the payload exceeds the
+configured threshold, or when the server refuses it because of its size,
+we fall back on a documented shrink — texts stay readable in the
+`json_content`, the metadata keeps only what is needed to find and drive
+the entry.
 
-Conséquence assumée : une entrée repliée ne porte plus ses textes de
-réponse en metadata. `referentiel.py` la signale et refuse de la
-compléter à l'aveugle plutôt que de dédoublonner sur des textes absents.
+Accepted consequence: a shrunk entry no longer carries its answer texts
+in metadata. `referentiel.py` reports it and refuses to complete such an
+entry rather than deduplicating blindly.
 """
 
 import json
@@ -19,9 +20,9 @@ from typing import TypeVar
 from loguru import logger
 
 #: Clés dont le contenu peut atteindre une taille arbitraire.
-CLES_TEXTE_LONG = ("candidate_answer",)
+LONG_TEXT_KEYS = ("candidate_answer",)
 
-_MOTIFS_VOLUME = (
+_SIZE_ERROR_PATTERNS = (
     "too large",
     "too long",
     "payload",
@@ -35,126 +36,128 @@ T = TypeVar("T")
 
 
 @dataclass
-class ChargeAsset:
-    """Couple metadata / contenu prêt à être envoyé à Kili."""
+class AssetPayload:
+    """Metadata and content pair, ready to be sent to Kili."""
 
     json_metadata: dict
     json_content: list[dict]
-    repli: bool = False
+    fallback: bool = False
 
 
-def taille_metadata(metadata: dict) -> int:
-    """Mesure la taille sérialisée d'une metadata.
+def metadata_size(metadata: dict) -> int:
+    """Measure the serialized size of a metadata dictionary.
 
     Args:
-        metadata: Metadata à mesurer.
+        metadata: Metadata to measure.
 
     Returns:
-        Le nombre d'octets de sa sérialisation JSON.
+        The number of bytes of its JSON serialization.
     """
     return len(json.dumps(metadata, ensure_ascii=False).encode("utf-8"))
 
 
-def alleger_metadata(metadata: dict) -> dict:
-    """Réduit une metadata à ses identifiants et à ses champs de pilotage.
+def shrink_metadata(metadata: dict) -> dict:
+    """Reduce a metadata dictionary to its identifiers and driving fields.
 
-    Les textes longs sont retirés : réponse candidate, et texte de chaque
-    formulation validée. La question, elle, est conservée — c'est la clé
-    fonctionnelle de l'entrée, et elle est bornée.
+    Long texts are dropped: the candidate answer, and the text of every
+    validated wording. The question itself is kept — it is the functional
+    key of the entry, and its size is bounded.
 
     Args:
-        metadata: Metadata complète.
+        metadata: Complete metadata.
 
     Returns:
-        Une nouvelle metadata allégée, marquée `repli_texte`.
+        A new, shrunk metadata dictionary, flagged with `repli_texte`.
     """
-    allegee = {
-        cle: valeur
-        for cle, valeur in metadata.items()
-        if cle not in CLES_TEXTE_LONG
+    shrunk = {
+        key: value
+        for key, value in metadata.items()
+        if key not in LONG_TEXT_KEYS
     }
-    reponses = allegee.get("answers")
-    if isinstance(reponses, list):
-        allegee["answers"] = [
-            {cle: val for cle, val in reponse.items() if cle != "text"}
-            for reponse in reponses
-            if isinstance(reponse, dict)
+    answers = shrunk.get("answers")
+    if isinstance(answers, list):
+        shrunk["answers"] = [
+            {key: value for key, value in answer.items() if key != "text"}
+            for answer in answers
+            if isinstance(answer, dict)
         ]
-    allegee["repli_texte"] = True
-    return allegee
+    shrunk["repli_texte"] = True
+    return shrunk
 
 
-def preparer_charge(
-    metadata: dict, json_content: list[dict], taille_max: int
-) -> ChargeAsset:
-    """Prépare la charge d'un asset, en allégeant la metadata si besoin.
+def prepare_payload(
+    metadata: dict, json_content: list[dict], max_size: int
+) -> AssetPayload:
+    """Prepare an asset payload, shrinking the metadata when needed.
 
     Args:
-        metadata: Metadata complète.
-        json_content: Rendu rich text de l'asset.
-        taille_max: Taille maximale tolérée pour la metadata, en octets.
+        metadata: Complete metadata.
+        json_content: Rich text rendering of the asset.
+        max_size: Maximum tolerated metadata size, in bytes.
 
     Returns:
-        La charge à envoyer à Kili.
+        The payload to send to Kili.
     """
-    if taille_metadata(metadata) <= taille_max:
-        return ChargeAsset(metadata, json_content)
+    if metadata_size(metadata) <= max_size:
+        return AssetPayload(metadata, json_content)
     logger.warning(
         "Metadata de {} octets au-dessus du seuil de {} : repli sur une "
         "metadata allégée, les textes restent dans le rendu.",
-        taille_metadata(metadata),
-        taille_max,
+        metadata_size(metadata),
+        max_size,
     )
-    return ChargeAsset(alleger_metadata(metadata), json_content, repli=True)
+    return AssetPayload(
+        shrink_metadata(metadata), json_content, fallback=True
+    )
 
 
-def est_erreur_de_volume(erreur: Exception) -> bool:
-    """Devine si une erreur d'écriture est due au volume de la charge.
+def is_size_error(error: Exception) -> bool:
+    """Guess whether a write error is caused by the payload size.
 
     Args:
-        erreur: Exception levée par le SDK Kili.
+        error: Exception raised by the Kili SDK.
 
     Returns:
-        `True` si le message évoque un dépassement de taille.
+        `True` when the message hints at a size overflow.
     """
-    message = str(erreur).lower()
-    return any(motif in message for motif in _MOTIFS_VOLUME)
+    message = str(error).lower()
+    return any(pattern in message for pattern in _SIZE_ERROR_PATTERNS)
 
 
-def ecrire_avec_repli(
-    ecriture: Callable[[ChargeAsset], T],
+def write_with_fallback(
+    write: Callable[[AssetPayload], T],
     metadata: dict,
     json_content: list[dict],
-    taille_max: int,
+    max_size: int,
 ) -> T:
-    """Écrit un asset, en repliant la metadata si le serveur la refuse.
+    """Write an asset, shrinking the metadata if the server refuses it.
 
     Args:
-        ecriture: Fonction qui réalise l'écriture Kili pour une charge.
-        metadata: Metadata complète.
-        json_content: Rendu rich text de l'asset.
-        taille_max: Taille maximale tolérée pour la metadata, en octets.
+        write: Function performing the Kili write for a given payload.
+        metadata: Complete metadata.
+        json_content: Rich text rendering of the asset.
+        max_size: Maximum tolerated metadata size, in bytes.
 
     Returns:
-        Le résultat de la fonction d'écriture.
+        The result of the write function.
 
     Raises:
-        Exception: Toute erreur d'écriture qui n'est pas un problème de
-            volume est propagée telle quelle.
+        Exception: Any write error that is not a size problem is
+            propagated as is.
     """
-    charge = preparer_charge(metadata, json_content, taille_max)
+    payload = prepare_payload(metadata, json_content, max_size)
     try:
-        return ecriture(charge)
-    except Exception as erreur:
-        if charge.repli or not est_erreur_de_volume(erreur):
+        return write(payload)
+    except Exception as error:
+        if payload.fallback or not is_size_error(error):
             raise
         logger.warning(
             "Écriture refusée pour cause de volume ({}) : nouvelle "
             "tentative avec une metadata allégée.",
-            erreur,
+            error,
         )
-        return ecriture(
-            ChargeAsset(
-                alleger_metadata(metadata), json_content, repli=True
+        return write(
+            AssetPayload(
+                shrink_metadata(metadata), json_content, fallback=True
             )
         )

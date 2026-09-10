@@ -1,15 +1,15 @@
-"""Conversion du markdown produit par la RAG en rich text Kili.
+"""Conversion of the RAG markdown into Kili rich text.
 
-Le chemin est celui du convertisseur récursif publié par Kili dans le
-notebook `recipes/import_text_assets.ipynb` : markdown -> HTML
-(`markdown-it-py`) -> arbre de nœuds. Une règle est ajoutée : `strong`,
-`em` et `code` en ligne deviennent des **marques** sur le nœud texte, et
-non des éléments — Kili n'accepte pas ces types d'élément.
+The path is the one of the recursive converter published by Kili in the
+`recipes/import_text_assets.ipynb` notebook: markdown -> HTML
+(`markdown-it-py`) -> node tree. One rule is added: inline `strong`, `em`
+and `code` become **marks** on the text node rather than elements — Kili
+does not accept those element types.
 
-Sous-ensemble couvert : titres `h1`-`h4`, paragraphes, `ul` / `ol` / `li`,
-`blockquote`, tableaux, gras, italique, code en ligne. Les autres
-constructions ont un repli documenté (voir le README) et rien ne lève
-d'exception : au pire le contenu retombe sur un paragraphe de texte brut.
+Covered subset: `h1`-`h4` headings, paragraphs, `ul` / `ol` / `li`,
+`blockquote`, tables, bold, italic, inline code. Everything else has a
+documented fallback (see the README) and nothing raises: at worst the
+content ends up as a plain text paragraph.
 """
 
 from dataclasses import dataclass, field
@@ -18,10 +18,10 @@ from html.parser import HTMLParser
 from loguru import logger
 from markdown_it import MarkdownIt
 
-from .richtext import GenerateurIds, noeud_element, noeud_texte
+from .richtext import IdGenerator, element_node, text_node
 
 #: Balises HTML rendues telles quelles comme éléments Kili.
-BLOCS = frozenset(
+BLOCKS = frozenset(
     {
         "blockquote",
         "h1",
@@ -41,7 +41,7 @@ BLOCS = frozenset(
 )
 
 #: Balises en ligne converties en marques sur le nœud texte.
-MARQUES = {
+MARKS = {
     "strong": "bold",
     "b": "bold",
     "em": "italic",
@@ -52,333 +52,325 @@ MARQUES = {
 }
 
 #: Balises sans contenu.
-BALISES_VIDES = frozenset({"br", "hr", "img", "wbr"})
+VOID_TAGS = frozenset({"br", "hr", "img", "wbr"})
 
-_TITRES_REPLIES = {"h5": "h4", "h6": "h4"}
+_HEADING_FALLBACKS = {"h5": "h4", "h6": "h4"}
 
 
 @dataclass
 class _Element:
-    """Nœud d'un arbre HTML intermédiaire."""
+    """Node of the intermediate HTML tree."""
 
     tag: str
-    attributs: dict[str, str] = field(default_factory=dict)
-    enfants: list["_Element | str"] = field(default_factory=list)
+    attributes: dict[str, str] = field(default_factory=dict)
+    children: list["_Element | str"] = field(default_factory=list)
 
 
-class _ConstructeurArbre(HTMLParser):
-    """Assemble un arbre `_Element` à partir d'un flux HTML."""
+class _TreeBuilder(HTMLParser):
+    """Assembles an `_Element` tree from an HTML stream."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.racine = _Element("racine")
-        self._pile: list[_Element] = [self.racine]
+        self.root = _Element("racine")
+        self._stack: list[_Element] = [self.root]
 
     def handle_starttag(self, tag: str, attrs: list) -> None:
-        """Ouvre un élément (voir `html.parser`)."""
+        """Open an element (see `html.parser`)."""
         element = _Element(tag, {k: v or "" for k, v in attrs})
-        self._pile[-1].enfants.append(element)
-        if tag not in BALISES_VIDES:
-            self._pile.append(element)
+        self._stack[-1].children.append(element)
+        if tag not in VOID_TAGS:
+            self._stack.append(element)
 
     def handle_startendtag(self, tag: str, attrs: list) -> None:
-        """Traite une balise auto-fermante (voir `html.parser`)."""
+        """Handle a self-closing tag (see `html.parser`)."""
         element = _Element(tag, {k: v or "" for k, v in attrs})
-        self._pile[-1].enfants.append(element)
+        self._stack[-1].children.append(element)
 
     def handle_endtag(self, tag: str) -> None:
-        """Ferme un élément (voir `html.parser`)."""
-        for indice in range(len(self._pile) - 1, 0, -1):
-            if self._pile[indice].tag == tag:
-                del self._pile[indice:]
+        """Close an element (see `html.parser`)."""
+        for index in range(len(self._stack) - 1, 0, -1):
+            if self._stack[index].tag == tag:
+                del self._stack[index:]
                 return
 
     def handle_data(self, data: str) -> None:
-        """Ajoute un fragment de texte (voir `html.parser`)."""
-        self._pile[-1].enfants.append(data)
+        """Append a text fragment (see `html.parser`)."""
+        self._stack[-1].children.append(data)
 
 
-def _analyser_html(html: str) -> _Element:
-    """Construit l'arbre HTML intermédiaire.
-
-    Args:
-        html: Fragment HTML produit par `markdown-it-py`.
-
-    Returns:
-        La racine de l'arbre.
-    """
-    constructeur = _ConstructeurArbre()
-    constructeur.feed(html)
-    constructeur.close()
-    return constructeur.racine
-
-
-def _texte_brut(noeud: "_Element | str") -> str:
-    """Concatène tout le texte d'un sous-arbre.
+def _parse_html(html: str) -> _Element:
+    """Build the intermediate HTML tree.
 
     Args:
-        noeud: Élément ou fragment de texte.
+        html: HTML fragment produced by `markdown-it-py`.
 
     Returns:
-        Le texte, sans balisage.
+        The root of the tree.
     """
-    if isinstance(noeud, str):
-        return noeud
-    return "".join(_texte_brut(enfant) for enfant in noeud.enfants)
+    builder = _TreeBuilder()
+    builder.feed(html)
+    builder.close()
+    return builder.root
 
 
-def _convertir_en_ligne(
-    noeuds: list["_Element | str"],
-    generateur: GenerateurIds,
-    marques: frozenset[str],
+def _plain_text(node: "_Element | str") -> str:
+    """Concatenate all the text of a subtree.
+
+    Args:
+        node: Element or text fragment.
+
+    Returns:
+        The text, without markup.
+    """
+    if isinstance(node, str):
+        return node
+    return "".join(_plain_text(child) for child in node.children)
+
+
+def _convert_inline(
+    nodes: list["_Element | str"],
+    generator: IdGenerator,
+    marks: frozenset[str],
 ) -> list[dict]:
-    """Convertit une suite de nœuds en nœuds texte.
+    """Convert a sequence of nodes into text nodes.
 
     Args:
-        noeuds: Enfants d'un élément, en contexte de ligne.
-        generateur: Générateur d'identifiants du document.
-        marques: Marques héritées des éléments englobants.
+        nodes: Children of an element, in inline context.
+        generator: Id generator of the document.
+        marks: Marks inherited from the enclosing elements.
 
     Returns:
-        La liste des nœuds texte produits.
+        The produced text nodes.
     """
-    resultat: list[dict] = []
-    for noeud in noeuds:
-        if isinstance(noeud, str):
-            if noeud:
-                resultat.append(noeud_texte(noeud, generateur, marques))
-        elif noeud.tag in MARQUES:
-            resultat.extend(
-                _convertir_en_ligne(
-                    noeud.enfants, generateur, marques | {MARQUES[noeud.tag]}
+    result: list[dict] = []
+    for node in nodes:
+        if isinstance(node, str):
+            if node:
+                result.append(text_node(node, generator, marks))
+        elif node.tag in MARKS:
+            result.extend(
+                _convert_inline(
+                    node.children, generator, marks | {MARKS[node.tag]}
                 )
             )
-        elif noeud.tag == "a":
-            resultat.extend(
-                _convertir_en_ligne(noeud.enfants, generateur, marques)
-            )
-            url = noeud.attributs.get("href", "")
+        elif node.tag == "a":
+            result.extend(_convert_inline(node.children, generator, marks))
+            url = node.attributes.get("href", "")
             if url:
-                resultat.append(
-                    noeud_texte(f" ({url})", generateur, marques)
-                )
-        elif noeud.tag == "img":
-            texte = noeud.attributs.get("alt") or "[image]"
-            resultat.append(noeud_texte(texte, generateur, marques))
-        elif noeud.tag == "br":
-            resultat.append(noeud_texte("\n", generateur, marques))
+                result.append(text_node(f" ({url})", generator, marks))
+        elif node.tag == "img":
+            label = node.attributes.get("alt") or "[image]"
+            result.append(text_node(label, generator, marks))
+        elif node.tag == "br":
+            result.append(text_node("\n", generator, marks))
         else:
             # Balise en ligne inconnue : on garde son texte.
-            resultat.extend(
-                _convertir_en_ligne(noeud.enfants, generateur, marques)
-            )
-    return resultat
+            result.extend(_convert_inline(node.children, generator, marks))
+    return result
 
 
-def _convertir_bloc_de_code(
-    element: _Element, generateur: GenerateurIds
+def _convert_code_block(
+    element: _Element, generator: IdGenerator
 ) -> list[dict]:
-    """Replie un bloc de code en paragraphes marqués `code`.
+    """Fall back on `code`-marked paragraphs for a code block.
 
     Args:
-        element: Élément `pre`.
-        generateur: Générateur d'identifiants du document.
+        element: The `pre` element.
+        generator: Id generator of the document.
 
     Returns:
-        Un paragraphe par ligne de code.
+        One paragraph per line of code.
     """
-    lignes = _texte_brut(element).rstrip("\n").split("\n")
+    lines = _plain_text(element).rstrip("\n").split("\n")
     return [
-        noeud_element(
+        element_node(
             "p",
-            [noeud_texte(ligne, generateur, {"code"})],
-            generateur,
+            [text_node(line, generator, {"code"})],
+            generator,
             {"backgroundColor": "#f5f5f5"},
         )
-        for ligne in lignes
+        for line in lines
     ]
 
 
-def _convertir_blocs(
-    noeuds: list["_Element | str"],
-    generateur: GenerateurIds,
-    marques: frozenset[str],
+def _convert_blocks(
+    nodes: list["_Element | str"],
+    generator: IdGenerator,
+    marks: frozenset[str],
 ) -> list[dict]:
-    """Convertit une suite de nœuds en contexte de bloc.
+    """Convert a sequence of nodes in block context.
 
-    Les suites de contenu en ligne rencontrées entre deux blocs sont
-    regroupées dans un paragraphe.
+    Runs of inline content found between two blocks are grouped into a
+    paragraph.
 
     Args:
-        noeuds: Enfants d'un élément, en contexte de bloc.
-        generateur: Générateur d'identifiants du document.
-        marques: Marques héritées des éléments englobants.
+        nodes: Children of an element, in block context.
+        generator: Id generator of the document.
+        marks: Marks inherited from the enclosing elements.
 
     Returns:
-        La liste des nœuds de bloc produits.
+        The produced block nodes.
     """
-    resultat: list[dict] = []
-    tampon: list["_Element | str"] = []
+    result: list[dict] = []
+    buffer: list["_Element | str"] = []
 
-    def vider_tampon() -> None:
-        if not tampon:
+    def flush_buffer() -> None:
+        if not buffer:
             return
-        textes = _convertir_en_ligne(tampon, generateur, marques)
-        tampon.clear()
-        if any(noeud["text"].strip() for noeud in textes):
-            resultat.append(noeud_element("p", textes, generateur))
+        texts = _convert_inline(buffer, generator, marks)
+        buffer.clear()
+        if any(node["text"].strip() for node in texts):
+            result.append(element_node("p", texts, generator))
 
-    for noeud in noeuds:
-        est_bloc = isinstance(noeud, _Element) and (
-            noeud.tag in BLOCS
-            or noeud.tag in _TITRES_REPLIES
-            or noeud.tag in {"pre", "hr", "th", "div"}
+    for node in nodes:
+        is_block = isinstance(node, _Element) and (
+            node.tag in BLOCKS
+            or node.tag in _HEADING_FALLBACKS
+            or node.tag in {"pre", "hr", "th", "div"}
         )
-        if not est_bloc:
-            tampon.append(noeud)
+        if not is_block:
+            buffer.append(node)
             continue
-        vider_tampon()
-        resultat.extend(_convertir_element(noeud, generateur, marques))
+        flush_buffer()
+        result.extend(_convert_element(node, generator, marks))
 
-    vider_tampon()
-    return resultat
+    flush_buffer()
+    return result
 
 
-def _convertir_element(
+def _convert_element(
     element: _Element,
-    generateur: GenerateurIds,
-    marques: frozenset[str],
+    generator: IdGenerator,
+    marks: frozenset[str],
 ) -> list[dict]:
-    """Convertit un élément de bloc.
+    """Convert a block element.
 
     Args:
-        element: Élément HTML à convertir.
-        generateur: Générateur d'identifiants du document.
-        marques: Marques héritées des éléments englobants.
+        element: HTML element to convert.
+        generator: Id generator of the document.
+        marks: Marks inherited from the enclosing elements.
 
     Returns:
-        La liste des nœuds Kili produits pour cet élément.
+        The Kili nodes produced for this element.
     """
-    tag = _TITRES_REPLIES.get(element.tag, element.tag)
+    tag = _HEADING_FALLBACKS.get(element.tag, element.tag)
 
     if tag == "pre":
-        return _convertir_bloc_de_code(element, generateur)
+        return _convert_code_block(element, generator)
 
     if tag == "hr":
         return [
-            noeud_element(
-                "p", [noeud_texte("———", generateur)], generateur
-            )
+            element_node("p", [text_node("———", generator)], generator)
         ]
 
     if tag == "th":
         # Kili ne connaît pas `th` : on le rend comme un `td` en gras.
         return [
-            noeud_element(
+            element_node(
                 "td",
-                _convertir_en_ligne(
-                    element.enfants, generateur, marques | {"bold"}
+                _convert_inline(
+                    element.children, generator, marks | {"bold"}
                 ),
-                generateur,
+                generator,
                 {"backgroundColor": "#eeeeee"},
             )
         ]
 
     if tag in {"p", "h1", "h2", "h3", "h4", "td"}:
         return [
-            noeud_element(
+            element_node(
                 tag,
-                _convertir_en_ligne(element.enfants, generateur, marques),
-                generateur,
+                _convert_inline(element.children, generator, marks),
+                generator,
             )
         ]
 
     if tag in {"ul", "ol", "table", "thead", "tbody", "tr", "li"}:
         return [
-            noeud_element(
+            element_node(
                 tag,
-                _convertir_blocs(element.enfants, generateur, marques)
+                _convert_blocks(element.children, generator, marks)
                 if tag != "li"
-                else _convertir_contenu_li(element, generateur, marques),
-                generateur,
+                else _convert_list_item(element, generator, marks),
+                generator,
             )
         ]
 
     if tag == "blockquote":
         return [
-            noeud_element(
+            element_node(
                 "blockquote",
-                _convertir_blocs(element.enfants, generateur, marques),
-                generateur,
+                _convert_blocks(element.children, generator, marks),
+                generator,
                 {"borderLeft": "3px solid #9e9e9e", "padding": "4px 8px"},
             )
         ]
 
     # Construction inconnue : repli sur son contenu, en contexte de bloc.
     logger.debug("Balise non couverte, repli en texte brut : {}", element.tag)
-    return _convertir_blocs(element.enfants, generateur, marques)
+    return _convert_blocks(element.children, generator, marks)
 
 
-def _convertir_contenu_li(
+def _convert_list_item(
     element: _Element,
-    generateur: GenerateurIds,
-    marques: frozenset[str],
+    generator: IdGenerator,
+    marks: frozenset[str],
 ) -> list[dict]:
-    """Convertit le contenu d'un `li`.
+    """Convert the content of a `li`.
 
-    Un `li` dit « serré » ne contient que du texte, un `li` « lâche »
-    contient des paragraphes et parfois une sous-liste.
+    A tight `li` holds text only, a loose one holds paragraphs and
+    sometimes a nested list.
 
     Args:
-        element: Élément `li`.
-        generateur: Générateur d'identifiants du document.
-        marques: Marques héritées des éléments englobants.
+        element: The `li` element.
+        generator: Id generator of the document.
+        marks: Marks inherited from the enclosing elements.
 
     Returns:
-        Les enfants du `li` : nœuds texte, paragraphes ou sous-listes.
+        The children of the `li`: text nodes, paragraphs or sublists.
     """
-    contient_bloc = any(
-        isinstance(enfant, _Element)
-        and (enfant.tag in BLOCS or enfant.tag in {"pre", "div"})
-        for enfant in element.enfants
+    holds_block = any(
+        isinstance(child, _Element)
+        and (child.tag in BLOCKS or child.tag in {"pre", "div"})
+        for child in element.children
     )
-    if contient_bloc:
-        return _convertir_blocs(element.enfants, generateur, marques)
-    return _convertir_en_ligne(element.enfants, generateur, marques)
+    if holds_block:
+        return _convert_blocks(element.children, generator, marks)
+    return _convert_inline(element.children, generator, marks)
 
 
-def markdown_vers_richtext(
-    markdown: str, generateur: GenerateurIds
+def markdown_to_richtext(
+    markdown: str, generator: IdGenerator
 ) -> list[dict]:
-    """Convertit du markdown en nœuds de bloc rich text Kili.
+    """Convert markdown into Kili rich text block nodes.
 
     Args:
-        markdown: Texte markdown produit par la RAG.
-        generateur: Générateur d'identifiants du document courant, partagé
-            avec le reste du rendu pour garantir l'unicité des `id`.
+        markdown: Markdown text produced by the RAG.
+        generator: Id generator of the current document, shared with the
+            rest of the rendering to keep ids unique.
 
     Returns:
-        La liste des nœuds de bloc. Toujours au moins un nœud : un
-        markdown vide ou illisible retombe sur un paragraphe.
+        The block nodes. Always at least one node: empty or unreadable
+        markdown falls back on a paragraph.
     """
     if not markdown.strip():
-        return [noeud_element("p", [], generateur)]
+        return [element_node("p", [], generator)]
 
     try:
         html = MarkdownIt("commonmark").enable("table").render(markdown)
-        blocs = _convertir_blocs(
-            _analyser_html(html).enfants, generateur, frozenset()
+        blocks = _convert_blocks(
+            _parse_html(html).children, generator, frozenset()
         )
-    except Exception as erreur:  # noqa: BLE001 - repli volontaire
+    except Exception as error:  # noqa: BLE001 - repli volontaire
         logger.warning(
-            "Markdown illisible, repli sur du texte brut : {}", erreur
+            "Markdown illisible, repli sur du texte brut : {}", error
         )
-        blocs = []
+        blocks = []
 
-    if not blocs:
+    if not blocks:
         return [
-            noeud_element(
-                "p", [noeud_texte(markdown.strip(), generateur)], generateur
+            element_node(
+                "p", [text_node(markdown.strip(), generator)], generator
             )
         ]
-    return blocs
+    return blocks
