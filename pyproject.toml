@@ -1,0 +1,57 @@
+[project]
+name = "rag-referentiel"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "afleuren", email = "antoine.j.fleurentin@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.4.0",
+    "httpx>=0.28.1",
+    "kili==2.142.1",
+    "loguru>=0.7.3",
+    "markdown-it-py>=4.2.0",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "rank-bm25>=0.2.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.6",
+]
+
+[tool.ruff]
+line-length = 79
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "PTH",  # flake8-use-pathlib
+    "ANN",  # flake8-annotations
+    "ARG",  # flake8-unused-arguments
+    "D101", # Docstring manquante sur une classe publique
+    "D102", # Docstring manquante sur une methode publique
+    "D103", # Docstring manquante sur une fonction publique
+    "D417", # Arguments non documentes
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Les noms de tests tiennent lieu de documentation.
+"tests/**.py" = ["ANN", "ARG", "D"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
