@@ -15,13 +15,20 @@ from loguru import logger
 DEFAULT_DIRECTORY = Path("data/samples")
 
 CG_AUTO = "cg_auto_2024.pdf"
-CG_HAB = "cg_habitation_2024.pdf"
+# Noms réels des pièces contractuelles MRH (multirisque habitation) : ils
+# exercent l'encodage des URL (accent de « Générales ») et la largeur des
+# colonnes du tableau des sources.
+CG_MRH = "DCON_ConditionGénérales_MRH_202605.pdf"
+SOUSCRIRE_MRH = "DCON_CommentSouscrire_MRH_202605.pdf"
+DIPA_MRH = "DCON_DIPA_MRH_202605.pdf"
 GUIDE = "guide_sinistres_2025.pdf"
 AVENANT = "avenant_bris_glace_2024.pdf"
 
 VERSIONS = {
     CG_AUTO: "sha1:9f3c1a2b7d40",
-    CG_HAB: "sha1:41d8ec5590aa",
+    CG_MRH: "sha1:41d8ec5590aa",
+    SOUSCRIRE_MRH: "sha1:7c20b1e94f06",
+    DIPA_MRH: "sha1:e5a39d0c7b12",
     GUIDE: "sha1:0b7742c3e118",
     AVENANT: "sha1:c62f5a90d331",
 }
@@ -84,9 +91,9 @@ REFERENCE_ENTRIES = [
             "justificatifs des dommages.",
         ],
         "sources": [
-            _source(CG_HAB, 22),
-            _source(CG_HAB, 23),
-            _source(CG_HAB, 24),
+            _source(CG_MRH, 22),
+            _source(CG_MRH, 23),
+            _source(CG_MRH, 24),
             _source(GUIDE, 7),
         ],
     },
@@ -119,7 +126,7 @@ REFERENCE_ENTRIES = [
             "**corporels et matériels** causés à des tiers par vous, les "
             "personnes vivant sous votre toit et vos animaux domestiques.",
         ],
-        "sources": [_source(CG_HAB, 5)],
+        "sources": [_source(CG_MRH, 5), _source(DIPA_MRH, 1)],
     },
     {
         "question": "Comment résilier mon contrat d'assurance habitation ?",
@@ -134,7 +141,11 @@ REFERENCE_ENTRIES = [
             "La résiliation infra-annuelle s'applique dès la deuxième "
             "année : **un mois de préavis**, sans frais.",
         ],
-        "sources": [_source(CG_HAB, 40)],
+        "sources": [
+            _source(SOUSCRIRE_MRH, 4),
+            _source(SOUSCRIRE_MRH, 5),
+            _source(CG_MRH, 40),
+        ],
     },
     {
         "question": "Suis-je couvert en cas de catastrophe naturelle ?",
@@ -144,7 +155,7 @@ REFERENCE_ENTRIES = [
             "**30 jours** pour déclarer, avec une franchise légale de "
             "**380 euros**.",
         ],
-        "sources": [_source(CG_HAB, 28), _source(GUIDE, 11)],
+        "sources": [_source(CG_MRH, 28), _source(GUIDE, 11)],
     },
     {
         "question": (
@@ -173,7 +184,7 @@ REFERENCE_ENTRIES = [
             "dans ses dépendances fermées. Hors du domicile, il faut "
             "l'option *mobilité douce*, plafonnée à **1 500 euros**.",
         ],
-        "sources": [_source(CG_HAB, 33)],
+        "sources": [_source(CG_MRH, 33), _source(DIPA_MRH, 2)],
     },
     {
         "question": (
@@ -259,7 +270,7 @@ PRODUCTION_RUN = [
             "- par lettre recommandée ou en ligne ;\n"
             "- **sans frais** ni justificatif."
         ),
-        "sources": [_source(CG_HAB, 40)],
+        "sources": [_source(SOUSCRIRE_MRH, 4), _source(SOUSCRIRE_MRH, 5)],
     },
     {
         "run_id": "run_105",
@@ -271,8 +282,8 @@ PRODUCTION_RUN = [
             "justificatifs des dommages."
         ),
         "sources": [
-            _source(CG_HAB, 22),
-            _source(CG_HAB, 23),
+            _source(CG_MRH, 22),
+            _source(CG_MRH, 23),
             _source(GUIDE, 7),
         ],
     },
@@ -306,7 +317,7 @@ PRODUCTION_RUN = [
             "La garantie catastrophe naturelle joue dès la survenance de "
             "l'événement, *sans arrêté*, et **sans franchise**."
         ),
-        "sources": [_source(CG_HAB, 28)],
+        "sources": [_source(CG_MRH, 28)],
     },
     {
         "run_id": "run_109",
@@ -329,7 +340,7 @@ PRODUCTION_RUN = [
             "Le vol de vélo est couvert **partout**, sans plafond ni "
             "option particulière."
         ),
-        "sources": [_source(CG_HAB, 33)],
+        "sources": [_source(CG_MRH, 33)],
     },
     # --- Questions inédites ---------------------------------------------
     {
@@ -353,7 +364,7 @@ PRODUCTION_RUN = [
             "jusqu'à **2 000 euros**, à condition d'avoir déclaré "
             "l'activité de télétravail."
         ),
-        "sources": [_source(CG_HAB, 17)],
+        "sources": [_source(DIPA_MRH, 2), _source(CG_MRH, 17)],
     },
     {
         "run_id": "run_113",

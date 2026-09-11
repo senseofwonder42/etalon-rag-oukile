@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **146 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **151 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -125,6 +125,19 @@ Les noms des variables d'environnement de réglage suivent les champs de
   document. Les URL sont dérivées d'un gabarit configurable plutôt que
   portées par la donnée : la RAG n'a pas à les émettre, et le réglage
   vaut rétroactivement pour tout le référentiel existant.
+- **Noms de documents accentués.** Un accent collé depuis macOS arrive
+  souvent décomposé (NFD) : visuellement identique, mais pour le code un
+  autre document — la correction perdait la `doc_version`, signalait une
+  fausse suppression et produisait une autre URL. Le modèle `Source`
+  recompose désormais tout nom de document (NFC), ce qui couvre d'un
+  coup le JSONL de production, la metadata relue et la saisie des
+  annotateurs. Découvert en intégrant les vrais noms de pièces MRH, dont
+  `DCON_ConditionGénérales_MRH_202605.pdf`.
+- **URL longues.** Police réduite et césure autorisée n'importe où dans
+  la cellule, plutôt qu'un libellé court de type « Ouvrir » : tant qu'on
+  ne sait pas si l'URL est cliquable, masquer l'adresse priverait
+  l'annotateur du seul moyen de la copier. Si la sonde montre que les
+  liens sont cliquables, un libellé court deviendra la meilleure option.
 - **Carte de revue en deux colonnes.** La réponse à arbitrer est décalée
   à droite (`margin`, `maxWidth`)
   avec les sources qu'elle cite — elles décrivent la même prédiction — et

@@ -58,6 +58,16 @@ def test_source_without_a_page():
     assert Source(doc_id="cg.pdf", page=3).label() == "cg.pdf:3"
 
 
+def test_a_decomposed_accent_in_a_document_name_is_recomposed():
+    import unicodedata
+
+    composed = "DCON_ConditionGénérales_MRH_202605.pdf"
+    decomposed = unicodedata.normalize("NFD", composed)
+    assert decomposed != composed
+    assert Source(doc_id=decomposed).doc_id == composed
+    assert Source(doc_id=f"  {composed} ").doc_id == composed
+
+
 def test_verdict_confidence_is_bounded():
     with pytest.raises(ValidationError):
         Verdict(conforme=True, confiance=1.5, motif="x")

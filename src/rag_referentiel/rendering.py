@@ -34,6 +34,14 @@ BLOCK_STYLES = {
 #: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
 #: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
 RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
+#: Une URL est une longue chaîne sans espace : sans césure elle impose sa
+#: largeur à toute la colonne. On la réduit et on l'autorise à se couper
+#: n'importe où, pour qu'elle se replie dans sa cellule.
+LINK_TEXT_STYLES = {
+    "fontSize": "0.75em",
+    "wordBreak": "break-all",
+    "overflowWrap": "anywhere",
+}
 QUESTION_STYLES = {
     "backgroundColor": HEADER_BACKGROUND,
     **BLOCK_STYLES,
@@ -102,18 +110,26 @@ def _paragraph(
     )
 
 
-def _heading(level: str, text: str, generator: IdGenerator) -> dict:
+def _heading(
+    level: str,
+    text: str,
+    generator: IdGenerator,
+    styles: dict[str, str] | None = None,
+) -> dict:
     """Build a heading.
 
     Args:
         level: `h1` to `h4`.
         text: Content of the heading.
         generator: Id generator of the document.
+        styles: CSS styles, to place the heading in a column.
 
     Returns:
         The heading node.
     """
-    return element_node(level, [text_node(text, generator)], generator)
+    return element_node(
+        level, [text_node(text, generator)], generator, styles
+    )
 
 
 def _sources_table(
@@ -151,10 +167,21 @@ def _sources_table(
             styles or {},
         )
 
-    def cell(text: str, header: bool) -> dict:
+    def cell(
+        text: str,
+        header: bool,
+        text_styles: dict[str, str] | None = None,
+    ) -> dict:
         return element_node(
             "td",
-            [text_node(text, generator, {"bold"} if header else None)],
+            [
+                text_node(
+                    text,
+                    generator,
+                    {"bold"} if header else None,
+                    text_styles,
+                )
+            ],
             generator,
             {"backgroundColor": HEADER_BACKGROUND} if header else None,
         )
@@ -187,7 +214,9 @@ def _sources_table(
             cell(", ".join(str(page) for page in pages) or "—", False),
         ]
         if with_links:
-            cells.append(cell(urls[doc_id] or "—", False))
+            cells.append(
+                cell(urls[doc_id] or "—", False, LINK_TEXT_STYLES)
+            )
         rows.append(element_node("tr", cells, generator))
     body = element_node("tbody", rows, generator)
     return _apply_styles(
@@ -388,7 +417,11 @@ def render_review_asset(
                 _answer_block(answer, generator, VALIDATED_STYLES)
             )
 
-    blocks.append(_heading("h2", "Réponse générée à arbitrer", generator))
+    blocks.append(
+        _heading(
+            "h2", "Réponse générée à arbitrer", generator, RIGHT_COLUMN
+        )
+    )
     blocks.extend(
         _apply_styles(
             markdown_to_richtext(case.candidate_answer, generator),
@@ -396,7 +429,9 @@ def render_review_asset(
         )
     )
 
-    blocks.append(_heading("h2", "Sources citées", generator))
+    blocks.append(
+        _heading("h2", "Sources citées", generator, RIGHT_COLUMN)
+    )
     blocks.extend(
         _sources_table(
             case.sources, generator, RIGHT_COLUMN, url_template

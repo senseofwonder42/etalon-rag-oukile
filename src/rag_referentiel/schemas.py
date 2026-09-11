@@ -5,10 +5,11 @@ are therefore left untouched: they are a wire format, read back by every
 run and by the JSONL exports.
 """
 
+import unicodedata
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Status = Literal["ACTIF", "A_REVERIFIER", "ARCHIVE"]
 Origin = Literal["metier", "rag_valide", "rag_corrige"]
@@ -29,6 +30,15 @@ class Source(BaseModel):
     doc_id: str
     page: int | None = None
     doc_version: str | None = None
+
+    @field_validator("doc_id")
+    @classmethod
+    def _normalize_doc_id(cls, value: str) -> str:
+        # Un accent collé depuis macOS arrive souvent décomposé (NFD) : le
+        # même nom de fichier serait alors un autre document pour toutes
+        # les comparaisons, et produirait une autre URL. On ramène tout à
+        # la forme composée (NFC).
+        return unicodedata.normalize("NFC", value).strip()
 
     def label(self) -> str:
         """Render the source as `doc.pdf:12`.

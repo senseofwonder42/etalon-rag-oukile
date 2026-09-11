@@ -13,6 +13,7 @@ from loguru import logger
 
 from rag_referentiel.client import create_client
 from rag_referentiel.interfaces import REFERENCE_INTERFACE
+from rag_referentiel.rendering import LINK_TEXT_STYLES, RIGHT_COLUMN
 from rag_referentiel.richtext import (
     IdGenerator,
     document,
@@ -21,6 +22,12 @@ from rag_referentiel.richtext import (
 )
 
 EXTERNAL_ID = "sonde_richtext"
+#: Une URL SharePoint réaliste, longue et accentuée, pour éprouver la
+#: largeur de la colonne « Lien ».
+LONG_URL = (
+    "https://contoso.sharepoint.com/sites/assurance/Documents/"
+    "DCON_ConditionG%C3%A9n%C3%A9rales_MRH_202605.pdf#page=22"
+)
 
 
 def build_probe_asset() -> list[dict]:
@@ -36,15 +43,34 @@ def build_probe_asset() -> list[dict]:
     ) -> dict:
         return element_node("p", children, generator, styles)
 
+    def heading_in_right_column() -> dict:
+        return element_node(
+            "h3",
+            [text_node("Titre dans la colonne de droite", generator)],
+            generator,
+            RIGHT_COLUMN,
+        )
+
     def heading(level: str, text: str) -> dict:
         return element_node(
             level, [text_node(text, generator)], generator
         )
 
-    def cell(text: str, header: bool = False) -> dict:
+    def cell(
+        text: str,
+        header: bool = False,
+        text_styles: dict[str, str] | None = None,
+    ) -> dict:
         return element_node(
             "td",
-            [text_node(text, generator, {"bold"} if header else None)],
+            [
+                text_node(
+                    text,
+                    generator,
+                    {"bold"} if header else None,
+                    text_styles,
+                )
+            ],
             generator,
             {"backgroundColor": "#eeeeee"} if header else None,
         )
@@ -87,6 +113,7 @@ def build_probe_asset() -> list[dict]:
             [text_node("Texte aligné à droite.", generator)],
             {"textAlign": "right"},
         ),
+        heading_in_right_column(),
         paragraph(
             [text_node("Bloc décalé en colonne de droite.", generator)],
             {
@@ -178,7 +205,8 @@ def build_probe_asset() -> list[dict]:
                             "tr",
                             [
                                 cell("Document", True),
-                                cell("Page", True),
+                                cell("Pages", True),
+                                cell("Lien", True),
                             ],
                             generator,
                         )
@@ -191,16 +219,18 @@ def build_probe_asset() -> list[dict]:
                         element_node(
                             "tr",
                             [
-                                cell("cg_auto_2024.pdf"),
-                                cell("12"),
+                                cell("DCON_ConditionGénérales_MRH_202605.pdf"),
+                                cell("22, 23, 24"),
+                                cell(LONG_URL, text_styles=LINK_TEXT_STYLES),
                             ],
                             generator,
                         ),
                         element_node(
                             "tr",
                             [
-                                cell("cg_habitation_2024.pdf"),
-                                cell("22"),
+                                cell("DCON_DIPA_MRH_202605.pdf"),
+                                cell("1"),
+                                cell(LONG_URL, text_styles=LINK_TEXT_STYLES),
                             ],
                             generator,
                         ),
@@ -252,12 +282,17 @@ def main() -> None:
     )
     print(f"Asset « {EXTERNAL_ID} » importé dans le projet {project_id}.")
     print(
-        "Ouvrir l'asset et vérifier, dans l'ordre : niveaux de titre, "
-        "marques\n(gras, italique, code, souligné), fonds de couleur, "
-        "alignements, décalage\nen colonne de droite, listes, citation, "
-        "tableau.\n\nPuis la question des liens : l'une des trois URL du "
-        "paragraphe « Lien »\nest-elle cliquable ? Et la clé « url » de la "
-        "metadata apparaît-elle\nà côté de l'asset, cliquable ?"
+        "Ouvrir l'asset et vérifier, dans l'ordre : niveaux de titre,\n"
+        "marques (gras, italique, code, souligné), fonds de couleur,\n"
+        "alignements, décalage en colonne de droite, listes, citation,\n"
+        "tableau.\n\n"
+        "Dans le tableau : l'URL de la colonne « Lien » est-elle plus\n"
+        "petite, et se replie-t-elle dans sa cellule au lieu d'élargir\n"
+        "la colonne ? Le « Titre dans la colonne de droite » est-il bien\n"
+        "décalé ?\n\n"
+        "Puis la question des liens : l'une des trois URL du paragraphe\n"
+        "« Lien » est-elle cliquable ? Et la clé « url » de la metadata\n"
+        "apparaît-elle à côté de l'asset, cliquable ?"
     )
 
 

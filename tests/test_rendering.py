@@ -198,6 +198,31 @@ def test_the_reference_card_keeps_its_sources_full_width():
     assert "margin" not in table
 
 
+def test_right_column_headings_sit_inside_the_right_column():
+    document = render_review_asset(case(), [entry().answers[0]])
+    headings = {
+        n["children"][0]["text"]: n
+        for n in nodes(document)
+        if n.get("type") == "h2"
+    }
+    for title in ("Réponse générée à arbitrer", "Sources citées"):
+        assert headings[title]["margin"] == "0 0 0 35%"
+    assert "margin" not in headings["Formulations déjà validées"]
+
+
+def test_a_long_url_is_shrunk_and_allowed_to_wrap():
+    document = render_reference_asset(
+        entry(), "https://sp.exemple.fr/sites/assurance/{doc_id}#page={page}"
+    )
+    link = next(
+        n
+        for n in nodes(document)
+        if n.get("text", "").startswith("https://")
+    )
+    assert link["fontSize"] == "0.75em"
+    assert link["wordBreak"] == "break-all"
+
+
 def test_every_heading_stays_left_aligned():
     document = render_review_asset(case(), [entry().answers[0]])
     assert not any(

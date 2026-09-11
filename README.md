@@ -89,7 +89,10 @@ parcourir dans l'ordre, la première fois.
     n'a aucun nœud lien. La sonde importe la même URL sous trois formes
     (brute, en `code`, soulignée et colorée) et renseigne la clé `url`
     du `json_metadata` : vérifier laquelle, s'il y en a une, est
-    réellement cliquable. Voir « Consulter le document source ».
+    réellement cliquable. Vérifier aussi que l'URL de la colonne
+    « Lien » est plus petite et se replie dans sa cellule : `fontSize`
+    et `wordBreak` ne figurent pas nommément dans la liste des styles
+    documentés. Voir « Consulter le document source ».
 14. **Mise en deux colonnes de la carte de revue.** La réponse à
     arbitrer est décalée à droite par les styles `margin` et `maxWidth`,
     son titre par `textAlign`. Si le serveur ignore ces styles, la
@@ -485,7 +488,8 @@ Projet B — revue prod  : cl…
   partageant le même gabarit ; à droite, tout ce qui décrit la
   prédiction : la réponse à arbitrer sur fond ambre, puis les sources
   qu'elle cite, en tableau et en liste prête à copier-coller. Les titres
-  de section restent tous alignés à gauche.
+  « Réponse générée à arbitrer » et « Sources citées » sont placés dans
+  la colonne de droite, alignés sur son bord gauche.
   La question du référentiel à laquelle le cas a été apparié est
   toujours rappelée juste au-dessus des formulations qui s'y rattachent,
   même lorsqu'elle est mot pour mot celle qui a été posée. Sur une
@@ -586,6 +590,7 @@ automatique**.
 | metadata trop volumineuse | repli documenté, textes conservés dans le rendu |
 | plusieurs pages d'un même document | `doc.pdf:12 14` — les pages suivent leur document |
 | approximation de saisie des sources | réparée quand c'est possible, signalée sinon (voir « Format des sources ») |
+| accent décomposé dans un nom de document (copier-coller macOS) | recomposé (NFC) par le modèle `Source` : même document, même URL |
 | numéro de formulation inexistant | signalé au rapport, le lot continue |
 | retrait de la dernière formulation | refusé : une entrée sans réponse ne sert à rien |
 | deux corrections successives sur la même entrée | les deux labels sont consommés, dans l'ordre, grâce au filigrane |

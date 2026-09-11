@@ -165,3 +165,18 @@ def test_the_url_metadata_key_needs_a_single_document():
     two = [Source(doc_id="cg.pdf", page=12), Source(doc_id="guide.pdf")]
     assert display_metadata(two, TEMPLATE) == {}
     assert display_metadata(one, None) == {}
+
+
+def test_a_real_document_name_round_trips():
+    typed = (
+        "DCON_ConditionGénérales_MRH_202605.pdf:22 23 24, "
+        "DCON_DIPA_MRH_202605.pdf:1"
+    )
+    parsed, unreadable = parse_sources(typed)
+    assert unreadable == []
+    assert format_sources(parsed) == typed
+
+
+def test_an_accented_document_name_is_encoded_in_its_url():
+    url = document_url(TEMPLATE, "DCON_ConditionGénérales_MRH_202605.pdf", 5)
+    assert "ConditionG%C3%A9n%C3%A9rales" in url
