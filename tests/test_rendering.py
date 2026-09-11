@@ -162,32 +162,44 @@ def test_the_answer_to_arbitrate_sits_in_the_right_column():
     ]
     assert candidate and all(n["margin"] == "0 0 0 35%" for n in candidate)
     assert validated and all("margin" not in n for n in validated)
-    heading = next(
-        n
-        for n in nodes(document)
-        if n.get("type") == "h2"
-        and n["children"][0]["text"] == "Réponse générée à arbitrer"
-    )
-    assert heading["textAlign"] == "right"
 
 
 def test_the_cited_sources_sit_in_the_right_column():
     document = render_review_asset(case(), [entry().answers[0]])
     table = next(n for n in nodes(document) if n.get("type") == "table")
     assert table["margin"] == "0 0 0 35%"
-    heading = next(
-        n
-        for n in nodes(document)
-        if n.get("type") == "h2"
-        and n["children"][0]["text"] == "Sources citées"
-    )
-    assert heading["textAlign"] == "right"
 
 
 def test_the_reference_card_keeps_its_sources_full_width():
     document = render_reference_asset(entry())
     table = next(n for n in nodes(document) if n.get("type") == "table")
     assert "margin" not in table
+
+
+def test_every_heading_stays_left_aligned():
+    document = render_review_asset(case(), [entry().answers[0]])
+    assert not any(
+        "textAlign" in n
+        for n in nodes(document)
+        if n.get("type", "").startswith("h")
+    )
+
+
+def test_the_reference_question_shares_the_wordings_envelope():
+    document = render_review_asset(
+        case(),
+        [entry().answers[0]],
+        candidate_question="Quel est le délai de déclaration ?",
+    )
+    question = next(
+        n for n in nodes(document) if n.get("backgroundColor") == "#eeeeee"
+    )
+    wording = next(
+        n for n in nodes(document) if n.get("backgroundColor") == "#e8f5e9"
+    )
+    for key in ("maxWidth", "padding", "borderRadius"):
+        assert question[key] == wording[key]
+    assert "margin" not in question
 
 
 def test_the_proposed_question_comes_just_above_the_wordings():

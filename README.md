@@ -475,10 +475,12 @@ Projet B — revue prod  : cl…
   document**, ses pages réunies dans la seconde colonne — suivi de la
   liste prête à copier-coller ;
 - projet B : la question posée en `h1`, un encadré expliquant le motif de
-  mise en revue, puis **deux colonnes** — les formulations validées à
-  gauche sur fond vert ; à droite, tout ce qui décrit la prédiction : la
-  réponse à arbitrer sur fond ambre, puis les sources qu'elle cite, en
-  tableau et en liste prête à copier-coller.
+  mise en revue, puis **deux colonnes** — à gauche la question du
+  référentiel sur fond gris et les formulations validées sur fond vert,
+  partageant le même gabarit ; à droite, tout ce qui décrit la
+  prédiction : la réponse à arbitrer sur fond ambre, puis les sources
+  qu'elle cite, en tableau et en liste prête à copier-coller. Les titres
+  de section restent tous alignés à gauche.
   La question du référentiel à laquelle le cas a été apparié est
   toujours rappelée juste au-dessus des formulations qui s'y rattachent,
   même lorsqu'elle est mot pour mot celle qui a été posée. Sur une

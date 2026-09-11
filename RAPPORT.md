@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **136 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **138 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -116,9 +116,14 @@ Les noms des variables d'environnement de réglage suivent les champs de
   serait un piège : l'annotateur saisirait une réponse qui n'irait nulle
   part.
 - **Carte de revue en deux colonnes.** La réponse à arbitrer est décalée
-  à droite (`margin`, `maxWidth`) et son titre ferré à droite
-  (`textAlign`), avec les sources qu'elle cite — elles décrivent la même
-  prédiction — et les formulations validées restant à gauche. Le texte
+  à droite (`margin`, `maxWidth`)
+  avec les sources qu'elle cite — elles décrivent la même prédiction — et
+  les formulations validées restant à gauche. Les blocs encadrés
+  partagent un gabarit commun (`BLOCK_STYLES`) : la question du
+  référentiel et les formulations qui en dépendent ont la même largeur et
+  le même arrondi, ce qui les aligne au lieu de laisser la question
+  courir sur toute la ligne. Les titres de section ne sont pas ferrés :
+  seul le contenu se déplace. Le texte
   lui-même n'est **pas** ferré à droite à l'intérieur du bloc : un
   paragraphe ou une liste ferrés à droite se lisent mal. Si le serveur
   ignore ces styles, la séparation repose encore sur les couleurs de

@@ -23,19 +23,28 @@ GREY = "#616161"
 #: sépare d'un coup d'œil ce qui fait foi de ce qui est à trancher. Le
 #: texte reste aligné à gauche à l'intérieur de son bloc, bien plus
 #: lisible qu'un texte ferré à droite.
-#: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
-#: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
-RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
-VALIDATED_STYLES = {
-    "backgroundColor": VALIDATED_BACKGROUND,
+#: Gabarit commun à tous les blocs encadrés de la carte : ils partagent
+#: la même largeur et le même arrondi, de sorte que la question du
+#: référentiel et les formulations qui en dépendent s'alignent.
+BLOCK_STYLES = {
     "padding": "4px 8px",
     "borderRadius": "6px",
     "maxWidth": "65%",
 }
+#: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
+#: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
+RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
+QUESTION_STYLES = {
+    "backgroundColor": HEADER_BACKGROUND,
+    **BLOCK_STYLES,
+}
+VALIDATED_STYLES = {
+    "backgroundColor": VALIDATED_BACKGROUND,
+    **BLOCK_STYLES,
+}
 CANDIDATE_STYLES = {
     "backgroundColor": CANDIDATE_BACKGROUND,
-    "padding": "4px 8px",
-    "borderRadius": "6px",
+    **BLOCK_STYLES,
     **RIGHT_COLUMN,
 }
 
@@ -339,14 +348,7 @@ def render_review_asset(
             )
         )
         blocks.append(
-            _paragraph(
-                candidate_question,
-                generator,
-                styles={
-                    "backgroundColor": HEADER_BACKGROUND,
-                    "padding": "4px 8px",
-                },
-            )
+            _paragraph(candidate_question, generator, styles=QUESTION_STYLES)
         )
 
     # Sur une question inédite il n'y a rien à montrer : la section
@@ -366,14 +368,7 @@ def render_review_asset(
                 _answer_block(answer, generator, VALIDATED_STYLES)
             )
 
-    blocks.append(
-        element_node(
-            "h2",
-            [text_node("Réponse générée à arbitrer", generator)],
-            generator,
-            {"textAlign": "right"},
-        )
-    )
+    blocks.append(_heading("h2", "Réponse générée à arbitrer", generator))
     blocks.extend(
         _apply_styles(
             markdown_to_richtext(case.candidate_answer, generator),
@@ -381,13 +376,6 @@ def render_review_asset(
         )
     )
 
-    blocks.append(
-        element_node(
-            "h2",
-            [text_node("Sources citées", generator)],
-            generator,
-            {"textAlign": "right"},
-        )
-    )
+    blocks.append(_heading("h2", "Sources citées", generator))
     blocks.extend(_sources_table(case.sources, generator, RIGHT_COLUMN))
     return document(blocks)
