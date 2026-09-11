@@ -308,8 +308,9 @@ cg_auto_2024.pdf:12 14 31, guide_sinistres.pdf:2 7
 donne cinq sources. Une page n'apparaît donc jamais seule et ne demande
 jamais de préfixe : c'est la même écriture qu'il y ait une page ou dix.
 
-**La liste courante est rappelée sous le tableau des sources de chaque
-carte, déjà dans ce format** : l'annotateur la copie, modifie ce qu'il
+Le tableau des sources de la carte suit la même logique : **une ligne par
+document**, ses pages réunies dans la colonne « Pages ». Et **la liste
+courante est rappelée juste en dessous, déjà au format de saisie** : l'annotateur la copie, modifie ce qu'il
 faut, et colle le résultat dans « Sources corrigées ».
 
 L'analyse répare les approximations de saisie plutôt que de les rejeter
@@ -461,8 +462,10 @@ Projet B — revue prod  : cl…
 **Ce qu'il faut regarder dans l'interface Kili :**
 
 - projet A : une carte par question, avec ses formulations validées sur
-  fond vert clair, sa provenance (origine, auteur, date) et ses sources en
-  tableau ;
+  fond vert clair sous un sous-titre « Réponse 1 », leur provenance
+  (origine, auteur, date), et ses sources en tableau — **une ligne par
+  document**, ses pages réunies dans la seconde colonne — suivi de la
+  liste prête à copier-coller ;
 - projet B : la question en `h1`, un encadré expliquant le motif de mise
   en revue, la réponse générée sur fond ambre, les sources en tableau
   suivies de la liste prête à copier-coller ; sur une question inédite il

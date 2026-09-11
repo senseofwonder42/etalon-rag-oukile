@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **126 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **129 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -153,7 +153,8 @@ Les noms des variables d'environnement de réglage suivent les champs de
   approximations de saisie courantes au lieu de les rejeter. Le
   formatage canonique (`format_sources`) est l'inverse exact de
   l'analyse : la liste rappelée sur la carte se recolle telle quelle
-  dans le job.
+  dans le job. Le tableau de la carte groupe lui aussi par document —
+  une ligne, ses pages réunies — plutôt qu'une ligne par page.
 - **Intervalles de pages.** `12-14` est développé en 12, 13, 14, avec un
   plafond de 50 pages : au-delà, c'est une faute de frappe plus
   probablement qu'une intention, et l'intervalle est signalé plutôt

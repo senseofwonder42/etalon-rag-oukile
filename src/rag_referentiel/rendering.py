@@ -11,7 +11,7 @@ Every displayed string stays in French: this is the business interface.
 from .markdown_to_richtext import markdown_to_richtext
 from .richtext import IdGenerator, document, element_node, text_node
 from .schemas import Answer, ReferenceEntry, ReviewCase, Source
-from .sources import format_sources
+from .sources import format_sources, group_by_document
 
 VALIDATED_BACKGROUND = "#e8f5e9"
 CANDIDATE_BACKGROUND = "#fff3e0"
@@ -89,14 +89,18 @@ def _heading(level: str, text: str, generator: IdGenerator) -> dict:
 def _sources_table(
     sources: list[Source], generator: IdGenerator
 ) -> list[dict]:
-    """Render sources as a `doc_id` / `page` table.
+    """Render sources as a `doc_id` / `pages` table.
+
+    One row per document, however many pages it is cited for: three rows
+    of `cg_auto.pdf` would only make the table harder to read.
 
     Args:
         sources: Sources to display.
         generator: Id generator of the document.
 
     Returns:
-        The table, or a paragraph when the list is empty.
+        The table followed by the copy-paste line, or a paragraph when
+        there is no source.
     """
     if not sources:
         return [
@@ -118,7 +122,7 @@ def _sources_table(
         [
             element_node(
                 "tr",
-                [cell("Document", True), cell("Page", True)],
+                [cell("Document", True), cell("Pages", True)],
                 generator,
             )
         ],
@@ -128,12 +132,14 @@ def _sources_table(
         element_node(
             "tr",
             [
-                cell(source.doc_id, False),
-                cell("—" if source.page is None else str(source.page), False),
+                cell(doc_id, False),
+                cell(
+                    ", ".join(str(page) for page in pages) or "—", False
+                ),
             ],
             generator,
         )
-        for source in sources
+        for doc_id, pages in group_by_document(sources)
     ]
     body = element_node("tbody", rows, generator)
     return [

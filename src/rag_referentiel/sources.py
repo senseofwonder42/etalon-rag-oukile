@@ -160,6 +160,26 @@ def parse_sources(text: str) -> tuple[list[Source], list[str]]:
     return sources, unreadable
 
 
+def group_by_document(
+    sources: list[Source],
+) -> list[tuple[str, list[int]]]:
+    """Group sources by document, keeping the order they were given in.
+
+    Args:
+        sources: Sources to group.
+
+    Returns:
+        One pair (document, pages) per document; the page list is empty
+        when the document is cited without a page.
+    """
+    grouped: dict[str, list[int]] = {}
+    for source in sources:
+        pages = grouped.setdefault(source.doc_id, [])
+        if source.page is not None and source.page not in pages:
+            pages.append(source.page)
+    return list(grouped.items())
+
+
 def format_sources(sources: list[Source]) -> str:
     """Render sources in the canonical input format.
 
@@ -173,12 +193,7 @@ def format_sources(sources: list[Source]) -> str:
         A string such as `cg_auto.pdf:12 14, guide.pdf:3`; empty when
         there is no source.
     """
-    pages_by_doc: dict[str, list[int]] = {}
-    for source in sources:
-        pages = pages_by_doc.setdefault(source.doc_id, [])
-        if source.page is not None and source.page not in pages:
-            pages.append(source.page)
     return ", ".join(
         f"{doc_id}:{' '.join(str(p) for p in pages)}" if pages else doc_id
-        for doc_id, pages in pages_by_doc.items()
+        for doc_id, pages in group_by_document(sources)
     )

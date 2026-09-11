@@ -1,5 +1,9 @@
 from rag_referentiel.schemas import Source
-from rag_referentiel.sources import format_sources, parse_sources
+from rag_referentiel.sources import (
+    format_sources,
+    group_by_document,
+    parse_sources,
+)
 
 
 def pages(text):
@@ -105,3 +109,18 @@ def test_formatting_then_parsing_is_stable():
     parsed, unreadable = parse_sources(typed)
     assert unreadable == []
     assert format_sources(parsed) == typed
+
+
+def test_grouping_keeps_the_order_and_drops_duplicate_pages():
+    sources = [
+        Source(doc_id="cg.pdf", page=12),
+        Source(doc_id="guide.pdf", page=3),
+        Source(doc_id="cg.pdf", page=14),
+        Source(doc_id="cg.pdf", page=12),
+        Source(doc_id="annexe.pdf"),
+    ]
+    assert group_by_document(sources) == [
+        ("cg.pdf", [12, 14]),
+        ("guide.pdf", [3]),
+        ("annexe.pdf", []),
+    ]

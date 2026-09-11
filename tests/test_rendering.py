@@ -80,6 +80,28 @@ def test_the_answer_number_heads_its_wording():
     assert "origine : metier" in content
 
 
+def test_the_sources_table_holds_one_row_per_document():
+    document = render_reference_asset(entry())
+    rows = [n for n in nodes(document) if n.get("type") == "tr"]
+    # Une ligne d'en-tête, une seule ligne pour les deux pages du même
+    # document.
+    assert len(rows) == 2
+    cells = [
+        c["children"][0]["text"] for c in rows[1]["children"]
+    ]
+    assert cells == ["cg_auto.pdf", "12, 14"]
+
+
+def test_a_document_without_a_page_shows_a_dash():
+    entry_without_page = entry()
+    entry_without_page.sources = [Source(doc_id="annexe.pdf")]
+    document = render_reference_asset(entry_without_page)
+    rows = [n for n in nodes(document) if n.get("type") == "tr"]
+    assert [
+        c["children"][0]["text"] for c in rows[1]["children"]
+    ] == ["annexe.pdf", "—"]
+
+
 def test_sources_are_repeated_in_the_input_format():
     document = render_reference_asset(entry())
     content = " ".join(n["text"] for n in nodes(document) if "text" in n)
