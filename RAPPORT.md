@@ -116,8 +116,10 @@ Les noms des variables d'environnement de réglage suivent les champs de
 - **Question du référentiel sur un appariement certain.** Elle est
   désormais affichée aussi quand le cas part en `DIVERGENCE`, puisque
   les formulations montrées lui appartiennent et que la question posée
-  en production est souvent une reformulation. Elle est tue lorsqu'elle
-  est mot pour mot la question posée : la répéter n'apprendrait rien.
+  en production est souvent une reformulation. Elle l'est **même
+  lorsqu'elle est identique à la question posée** : une carte dont la
+  structure varie selon les cas se lit moins bien qu'une carte qui
+  répète parfois une évidence.
 
 - **Normalisation BM25.** Les scores BM25 ne sont pas bornés ; ils sont
   ramenés dans `[0, 1]` en divisant par le score qu'obtient chaque entrée

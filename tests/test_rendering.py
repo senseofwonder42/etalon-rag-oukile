@@ -136,7 +136,7 @@ def test_a_matched_case_also_shows_the_reference_question():
     assert "Quel est le délai de déclaration ?" in content
 
 
-def test_a_reference_question_identical_to_the_asked_one_is_not_repeated():
+def test_a_reference_question_identical_to_the_asked_one_is_still_shown():
     matched = case("DIVERGENCE")
     document = render_review_asset(
         matched,
@@ -144,8 +144,8 @@ def test_a_reference_question_identical_to_the_asked_one_is_not_repeated():
         candidate_question=matched.question,
     )
     headings = _headings(document)
-    assert "Question du référentiel appariée" not in headings
-    assert "Formulations déjà validées" in headings
+    assert "Question du référentiel appariée" in headings
+    assert "Formulations validées pour cette question" in headings
 
 
 def test_the_answer_to_arbitrate_sits_in_the_right_column():

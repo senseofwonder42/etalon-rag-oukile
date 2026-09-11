@@ -9,7 +9,6 @@ Every displayed string stays in French: this is the business interface.
 """
 
 from .markdown_to_richtext import markdown_to_richtext
-from .normalisation import normalize_question
 from .richtext import IdGenerator, document, element_node, text_node
 from .schemas import Answer, ReferenceEntry, ReviewCase, Source
 from .sources import format_sources, group_by_document
@@ -279,9 +278,9 @@ def render_review_asset(
     anchor the annotator on the very opinion the review audits.
 
     The reference question is shown right above the wordings, since those
-    wordings belong to it — whether the match was certain or not, unless
-    it is word for word the question that was asked. On a brand new
-    question the whole wordings section disappears.
+    wordings belong to it — whether the match was certain or not, and
+    even when it is word for word the question that was asked. On a brand
+    new question the whole wordings section disappears.
 
     The validated wordings sit in the left column and the answer to
     arbitrate in the right one, so that what stands as truth and what is
@@ -312,21 +311,13 @@ def render_review_asset(
         )
     )
 
-    incertain = case.motif == "APPARIEMENT_INCERTAIN"
-    # Sur un appariement certain, la question du référentiel n'est
-    # rappelée que si elle diffère de celle qui a été posée : la répéter
-    # à l'identique n'apprendrait rien.
-    montrer_question = bool(candidate_question) and (
-        incertain
-        or normalize_question(candidate_question or "")
-        != normalize_question(case.question)
-    )
-    if montrer_question:
+    uncertain = case.motif == "APPARIEMENT_INCERTAIN"
+    if candidate_question:
         blocks.append(
             _heading(
                 "h2",
                 "Question du référentiel proposée"
-                if incertain
+                if uncertain
                 else "Question du référentiel appariée",
                 generator,
             )
@@ -349,7 +340,7 @@ def render_review_asset(
             _heading(
                 "h2",
                 "Formulations validées pour cette question"
-                if montrer_question
+                if candidate_question
                 else "Formulations déjà validées",
                 generator,
             )

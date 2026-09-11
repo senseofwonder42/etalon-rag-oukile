@@ -477,10 +477,10 @@ Projet B — revue prod  : cl…
   gauche sur fond vert, la réponse à arbitrer à droite sur fond ambre —
   et les sources en tableau suivies de la liste prête à copier-coller.
   La question du référentiel à laquelle le cas a été apparié est
-  rappelée juste au-dessus des formulations qui s'y rattachent, sauf si
-  elle est mot pour mot celle qui a été posée. Sur une question inédite,
-  il n'y a ni question de référence ni section « formulations
-  validées » ;
+  toujours rappelée juste au-dessus des formulations qui s'y rattachent,
+  même lorsqu'elle est mot pour mot celle qui a été posée. Sur une
+  question inédite, il n'y a ni question de référence ni section
+  « formulations validées » ;
 - les libellés des jobs, en français, et le fait que `MEME_QUESTION`
   précise qu'il ne concerne que les appariements incertains ;
 - **le verdict du juge n'apparaît nulle part** : il est en metadata.
