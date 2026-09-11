@@ -49,7 +49,7 @@ def project(kili, settings):
         ),
     ]
     project_id = create_project(kili, "Référentiel")
-    import_entries(kili, project_id, entries, settings.max_metadata_size)
+    import_entries(kili, project_id, entries, settings)
     return project_id, entries
 
 

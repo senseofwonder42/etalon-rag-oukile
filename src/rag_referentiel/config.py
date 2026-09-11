@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     embedding_model: str = "jina-embeddings-v5-nano"
     jina_base_url: str = "https://api.jina.ai/v1"
 
+    # --- Publication des documents sources -------------------------------
+    # Gabarit d'URL des documents, par exemple
+    # « https://contoso.sharepoint.com/sites/assurance/{doc_id}#page={page} ».
+    # Laisser vide si les documents ne sont publiés nulle part.
+    document_url_template: str | None = None
+
     # --- Stockage ---------------------------------------------------------
     max_metadata_size: int = Field(default=60_000, ge=1_000)
 

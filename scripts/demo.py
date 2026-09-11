@@ -64,7 +64,7 @@ def create_demo(arguments: argparse.Namespace, config: Settings) -> None:
         )
         if seed.question.strip()
     ]
-    import_entries(kili, reference_id, entries, config.max_metadata_size)
+    import_entries(kili, reference_id, entries, config)
 
     review_id = create_review_project(kili, config.review_project_title)
     cases, report = process(
@@ -80,7 +80,7 @@ def create_demo(arguments: argparse.Namespace, config: Settings) -> None:
         compute_external_ids(cases),
         {entry.question_id: entry.answers for entry in entries},
         {entry.question_id: entry.question for entry in entries},
-        config.max_metadata_size,
+        config,
     )
 
     logger.info("Décisions d'appariement : {}", report["decisions"])

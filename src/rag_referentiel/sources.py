@@ -14,6 +14,7 @@ usual slips are repaired rather than rejected (see `parse_sources`).
 """
 
 import re
+from urllib.parse import quote
 
 from loguru import logger
 
@@ -197,3 +198,61 @@ def format_sources(sources: list[Source]) -> str:
         f"{doc_id}:{' '.join(str(p) for p in pages)}" if pages else doc_id
         for doc_id, pages in group_by_document(sources)
     )
+
+
+def document_url(
+    template: str | None, doc_id: str, page: int | None
+) -> str | None:
+    """Build the URL of a source document from the configured template.
+
+    The template may hold `{doc_id}` and `{page}`, for instance
+    `https://contoso.sharepoint.com/sites/assurance/{doc_id}#page={page}`.
+    When the page is unknown, the anchor of the template is dropped:
+    an anchor is by nature page-specific.
+
+    Args:
+        template: Template configured in `DOCUMENT_URL_TEMPLATE`, or
+            `None` when documents are not published anywhere.
+        doc_id: Document name, URL-encoded before substitution.
+        page: Page number, when there is one.
+
+    Returns:
+        The URL, or `None` when no template is configured or when the
+        template cannot be filled in.
+    """
+    if not template:
+        return None
+    base = template if page is not None else template.split("#")[0]
+    try:
+        return base.format(
+            doc_id=quote(doc_id), page="" if page is None else page
+        )
+    except (KeyError, IndexError, ValueError) as error:
+        logger.warning(
+            "DOCUMENT_URL_TEMPLATE inutilisable ({}) : {}", template, error
+        )
+        return None
+
+
+def display_metadata(
+    sources: list[Source], template: str | None
+) -> dict[str, str]:
+    """Build the metadata keys Kili displays next to the asset.
+
+    Kili shows the `url` key of a `json_metadata` next to the asset. It
+    holds a single URL, so it is only filled in when the asset cites a
+    single document — with several, picking one would be arbitrary.
+
+    Args:
+        sources: Sources cited by the asset.
+        template: Template configured in `DOCUMENT_URL_TEMPLATE`.
+
+    Returns:
+        A `{"url": …}` dictionary, or an empty one.
+    """
+    documents = group_by_document(sources)
+    if len(documents) != 1:
+        return {}
+    doc_id, pages = documents[0]
+    url = document_url(template, doc_id, pages[0] if pages else None)
+    return {"url": url} if url else {}

@@ -37,7 +37,7 @@ from .schemas import (
     Status,
     today,
 )
-from .sources import parse_sources
+from .sources import display_metadata, parse_sources
 from .storage import AssetPayload, prepare_payload, write_with_fallback
 
 ENTRY_FIELDS = [
@@ -106,7 +106,7 @@ def import_entries(
     kili: object,
     project_id: str,
     entries: list[ReferenceEntry],
-    max_metadata_size: int,
+    settings: Settings,
 ) -> list[str]:
     """Import brand new entries into the repository.
 
@@ -114,18 +114,20 @@ def import_entries(
         kili: Kili client.
         project_id: Identifier of project A.
         entries: Entries to create.
-        max_metadata_size: Metadata fallback threshold, in bytes.
+        settings: Runtime settings.
 
     Returns:
         The `external_id` values of the created assets.
     """
     if not entries:
         return []
+    template = settings.document_url_template
     payloads = [
         prepare_payload(
-            entry.model_dump(),
-            render_reference_asset(entry),
-            max_metadata_size,
+            entry.model_dump()
+            | display_metadata(entry.sources, template),
+            render_reference_asset(entry, template),
+            settings.max_metadata_size,
         )
         for entry in entries
     ]
@@ -176,7 +178,7 @@ def write_entry(
     kili: object,
     project_id: str,
     entry: ReferenceEntry,
-    max_metadata_size: int,
+    settings: Settings,
 ) -> None:
     """Refresh both the metadata and the rendering of an existing entry.
 
@@ -184,7 +186,7 @@ def write_entry(
         kili: Kili client.
         project_id: Identifier of project A.
         entry: Entry to write, with its version already bumped.
-        max_metadata_size: Metadata fallback threshold, in bytes.
+        settings: Runtime settings.
     """
 
     def write(payload: AssetPayload) -> None:
@@ -197,11 +199,12 @@ def write_entry(
             ],
         )
 
+    template = settings.document_url_template
     write_with_fallback(
         write,
-        entry.model_dump(),
-        render_reference_asset(entry),
-        max_metadata_size,
+        entry.model_dump() | display_metadata(entry.sources, template),
+        render_reference_asset(entry, template),
+        settings.max_metadata_size,
     )
 
 
@@ -731,12 +734,7 @@ def promote_batch(
                 run_id=arbitrated.case.run_id,
             )
             _update_sources(entry, arbitrated, report)
-            import_entries(
-                kili,
-                reference_project_id,
-                [entry],
-                settings.max_metadata_size,
-            )
+            import_entries(kili, reference_project_id, [entry], settings)
             append_audit_label(
                 kili, reference_project_id, entry.question_id, text
             )
@@ -772,12 +770,7 @@ def promote_batch(
         if variant_added or sources_changed:
             entry.version += 1
             entry.derniere_verification = date
-            write_entry(
-                kili,
-                reference_project_id,
-                entry,
-                settings.max_metadata_size,
-            )
+            write_entry(kili, reference_project_id, entry, settings)
             report.entries_updated += 1
             if variant_added:
                 report.variants_added += 1
@@ -963,4 +956,4 @@ def apply_reference_labels(
         if changed:
             entry.version += 1
         entry.derniere_promotion = pending[-1].get("createdAt") or ""
-        write_entry(kili, project_id, entry, settings.max_metadata_size)
+        write_entry(kili, project_id, entry, settings)

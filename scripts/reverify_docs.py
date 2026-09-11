@@ -16,6 +16,7 @@ from _commun import settings, write_json
 from loguru import logger
 
 from rag_referentiel.client import create_client
+from rag_referentiel.config import Settings
 from rag_referentiel.referentiel import load_entries, write_entry
 from rag_referentiel.schemas import ReferenceEntry
 
@@ -140,7 +141,7 @@ def trigger_recheck(
     kili: object,
     project_id: str,
     entries: list[ReferenceEntry],
-    max_metadata_size: int,
+    settings: Settings,
 ) -> None:
     """Put entries into recheck and send them back to the queue.
 
@@ -148,13 +149,13 @@ def trigger_recheck(
         kili: Kili client.
         project_id: Identifier of project A.
         entries: Entries to put into recheck.
-        max_metadata_size: Metadata fallback threshold, in bytes.
+        settings: Runtime settings.
     """
     external_ids = [entry.question_id for entry in entries]
     for entry in entries:
         entry.statut = "A_REVERIFIER"
         entry.version += 1
-        write_entry(kili, project_id, entry, max_metadata_size)
+        write_entry(kili, project_id, entry, settings)
     kili.update_properties_in_assets(
         project_id=project_id,
         external_ids=external_ids,
@@ -272,12 +273,7 @@ def main() -> None:
                 len(impacted),
             )
             return
-        trigger_recheck(
-            kili,
-            arguments.reference_project,
-            impacted,
-            config.max_metadata_size,
-        )
+        trigger_recheck(kili, arguments.reference_project, impacted, config)
 
 
 if __name__ == "__main__":

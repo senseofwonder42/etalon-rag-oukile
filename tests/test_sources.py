@@ -1,9 +1,13 @@
 from rag_referentiel.schemas import Source
 from rag_referentiel.sources import (
+    display_metadata,
+    document_url,
     format_sources,
     group_by_document,
     parse_sources,
 )
+
+TEMPLATE = "https://sp.exemple.fr/docs/{doc_id}#page={page}"
 
 
 def pages(text):
@@ -124,3 +128,40 @@ def test_grouping_keeps_the_order_and_drops_duplicate_pages():
         ("guide.pdf", [3]),
         ("annexe.pdf", []),
     ]
+
+
+def test_a_document_url_carries_the_page_anchor():
+    assert (
+        document_url(TEMPLATE, "cg_auto.pdf", 12)
+        == "https://sp.exemple.fr/docs/cg_auto.pdf#page=12"
+    )
+
+
+def test_a_document_without_a_page_drops_the_anchor():
+    assert (
+        document_url(TEMPLATE, "cg_auto.pdf", None)
+        == "https://sp.exemple.fr/docs/cg_auto.pdf"
+    )
+
+
+def test_a_document_name_is_url_encoded():
+    assert "cg%20auto.pdf" in document_url(TEMPLATE, "cg auto.pdf", 3)
+
+
+def test_no_template_means_no_url():
+    assert document_url(None, "cg_auto.pdf", 12) is None
+    assert document_url("", "cg_auto.pdf", 12) is None
+
+
+def test_an_unusable_template_is_reported_not_raised():
+    assert document_url("https://x/{inconnu}", "cg.pdf", 1) is None
+
+
+def test_the_url_metadata_key_needs_a_single_document():
+    one = [Source(doc_id="cg.pdf", page=12), Source(doc_id="cg.pdf", page=14)]
+    assert display_metadata(one, TEMPLATE) == {
+        "url": "https://sp.exemple.fr/docs/cg.pdf#page=12"
+    }
+    two = [Source(doc_id="cg.pdf", page=12), Source(doc_id="guide.pdf")]
+    assert display_metadata(two, TEMPLATE) == {}
+    assert display_metadata(one, None) == {}

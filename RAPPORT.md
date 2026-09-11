@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **138 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **146 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -115,6 +115,16 @@ Les noms des variables d'environnement de réglage suivent les champs de
   « Non », pas la correction écrite par le métier. Sans cela, le champ
   serait un piège : l'annotateur saisirait une réponse qui n'irait nulle
   part.
+- **Liens vers les documents sources.** Le SDK ne documente aucun nœud
+  lien dans le format rich text, et le convertisseur officiel de Kili
+  réduit les liens markdown à du texte — deux indices concordants qu'un
+  lien cliquable dans la carte n'est pas acquis. Ce qui est documenté,
+  c'est la clé `url` du `json_metadata`, « visible on the asset ». Le
+  projet fournit donc les deux : une colonne « Lien » dans le tableau
+  (au pire du texte à copier) et la clé `url` quand l'asset cite un seul
+  document. Les URL sont dérivées d'un gabarit configurable plutôt que
+  portées par la donnée : la RAG n'a pas à les émettre, et le réglage
+  vaut rétroactivement pour tout le référentiel existant.
 - **Carte de revue en deux colonnes.** La réponse à arbitrer est décalée
   à droite (`margin`, `maxWidth`)
   avec les sources qu'elle cite — elles décrivent la même prédiction — et

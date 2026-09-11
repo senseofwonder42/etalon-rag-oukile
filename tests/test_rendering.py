@@ -170,6 +170,28 @@ def test_the_cited_sources_sit_in_the_right_column():
     assert table["margin"] == "0 0 0 35%"
 
 
+def test_the_sources_table_carries_the_links_when_configured():
+    document = render_reference_asset(
+        entry(), "https://sp.exemple.fr/docs/{doc_id}#page={page}"
+    )
+    rows = [n for n in nodes(document) if n.get("type") == "tr"]
+    assert [
+        c["children"][0]["text"] for c in rows[0]["children"]
+    ] == ["Document", "Pages", "Lien"]
+    assert (
+        rows[1]["children"][2]["children"][0]["text"]
+        == "https://sp.exemple.fr/docs/cg_auto.pdf#page=12"
+    )
+
+
+def test_without_a_template_the_table_has_no_link_column():
+    document = render_reference_asset(entry())
+    rows = [n for n in nodes(document) if n.get("type") == "tr"]
+    assert [
+        c["children"][0]["text"] for c in rows[0]["children"]
+    ] == ["Document", "Pages"]
+
+
 def test_the_reference_card_keeps_its_sources_full_width():
     document = render_reference_asset(entry())
     table = next(n for n in nodes(document) if n.get("type") == "table")

@@ -85,19 +85,24 @@ parcourir dans l'ordre, la première fois.
     et promotion ne sont pas concurrentes ; si elles le deviennent, il
     faudra passer à des identifiants stables et étendre les catégories du
     job au-delà de cinq.
-13. **Mise en deux colonnes de la carte de revue.** La réponse à
+13. **Liens vers les documents sources.** Le format rich text documenté
+    n'a aucun nœud lien. La sonde importe la même URL sous trois formes
+    (brute, en `code`, soulignée et colorée) et renseigne la clé `url`
+    du `json_metadata` : vérifier laquelle, s'il y en a une, est
+    réellement cliquable. Voir « Consulter le document source ».
+14. **Mise en deux colonnes de la carte de revue.** La réponse à
     arbitrer est décalée à droite par les styles `margin` et `maxWidth`,
     son titre par `textAlign`. Si le serveur ignore ces styles, la
     séparation repose encore sur les couleurs de fond : rien n'est
     perdu, mais la lecture en colonnes disparaît. À constater sur la
     sonde avant de compter dessus.
-14. **Catégories des `json_interface`.** Les catégories sont écrites
+15. **Catégories des `json_interface`.** Les catégories sont écrites
     `{"CODE": {"name": "Libellé", "children": []}}`, sans clé `id`. Le SDK
     ne valide pas le `json_interface` : il le sérialise et l'envoie.
     Vérifier que les deux projets s'ouvrent et que les jobs s'affichent
     comme attendu ; ajouter un `id` par catégorie si l'interface les
     exige.
-15. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
+16. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
     `anthropic`. Le prompt attend un objet JSON ; une réponse illisible
     est traitée comme « non conforme, confiance nulle », ce qui envoie le
     cas en revue plutôt que de le passer sous silence.
@@ -533,6 +538,7 @@ uv run python scripts/demo.py --teardown --project-id <ID>
 | --- | --- |
 | `KILI_API_KEY` | obligatoire pour tout script qui parle à l'instance |
 | `KILI_API_ENDPOINT` | endpoint GraphQL ; SaaS par défaut |
+| `DOCUMENT_URL_TEMPLATE` | gabarit d'URL des documents sources, par exemple `https://…/Documents/{doc_id}#page={page}`. Renseigné, il ajoute une colonne « Lien » au tableau des sources et remplit la clé `url` de la metadata. Voir « Consulter le document source » plus bas. |
 | `KILI_CA_BUNDLE` | chemin d'un bundle de certificats, pour une instance derrière un proxy d'entreprise. Transmis à `Kili(verify=…)`. Si le fichier n'existe pas, le script **échoue** au lieu de retomber silencieusement sur les certificats du système. La vérification TLS n'est jamais désactivée. |
 | `ANTHROPIC_API_KEY` | LLM-as-judge ; inutile en `--hors-ligne` |
 | `JINA_API_KEY` | embeddings ; inutile en `--hors-ligne` |

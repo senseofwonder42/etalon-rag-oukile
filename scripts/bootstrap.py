@@ -73,7 +73,7 @@ def main() -> None:
         existing.add(entry.question_id)
         entries.append(entry)
 
-    import_entries(kili, project_id, entries, config.max_metadata_size)
+    import_entries(kili, project_id, entries, config)
     logger.info(
         "Référentiel amorcé — projet {} · {} entrées ajoutées.",
         project_id,

@@ -129,6 +129,37 @@ def build_probe_asset() -> list[dict]:
             ],
             generator,
         ),
+        heading("h3", "Lien"),
+        paragraph(
+            [
+                text_node("URL brute : ", generator),
+                text_node(
+                    "https://exemple.fr/docs/cg_auto_2024.pdf#page=12",
+                    generator,
+                ),
+            ]
+        ),
+        paragraph(
+            [
+                text_node("URL en code : ", generator),
+                text_node(
+                    "https://exemple.fr/docs/cg_auto_2024.pdf#page=12",
+                    generator,
+                    {"code"},
+                ),
+            ]
+        ),
+        paragraph(
+            [
+                text_node("URL soulignée et colorée : ", generator),
+                text_node(
+                    "https://exemple.fr/docs/cg_auto_2024.pdf#page=12",
+                    generator,
+                    {"underline"},
+                    {"color": "#1565c0"},
+                ),
+            ]
+        ),
         heading("h3", "Citation"),
         element_node(
             "blockquote",
@@ -210,14 +241,23 @@ def main() -> None:
         project_id=project_id,
         external_id_array=[EXTERNAL_ID],
         json_content_array=[build_probe_asset()],
-        json_metadata_array=[{"text": "Sonde du vocabulaire rich text."}],
+        json_metadata_array=[
+            {
+                "text": "Sonde du vocabulaire rich text.",
+                # Clé documentée comme affichée à côté de l'asset : c'est
+                # le seul endroit où un lien est censé être cliquable.
+                "url": "https://exemple.fr/docs/cg_auto_2024.pdf",
+            }
+        ],
     )
     print(f"Asset « {EXTERNAL_ID} » importé dans le projet {project_id}.")
     print(
         "Ouvrir l'asset et vérifier, dans l'ordre : niveaux de titre, "
         "marques\n(gras, italique, code, souligné), fonds de couleur, "
         "alignements, décalage\nen colonne de droite, listes, citation, "
-        "tableau."
+        "tableau.\n\nPuis la question des liens : l'une des trois URL du "
+        "paragraphe « Lien »\nest-elle cliquable ? Et la clé « url » de la "
+        "metadata apparaît-elle\nà côté de l'asset, cliquable ?"
     )
 
 

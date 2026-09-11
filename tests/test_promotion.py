@@ -40,9 +40,7 @@ def projects(kili, settings):
         author="c.durand",
         date="2026-03-11",
     )
-    import_entries(
-        kili, reference_id, [entry], settings.max_metadata_size
-    )
+    import_entries(kili, reference_id, [entry], settings)
     review_id = create_review_project(kili, "Revue")
     return reference_id, review_id, entry.question_id
 
@@ -71,7 +69,7 @@ def submit_case(kili, review_id, settings, **overrides):
         identifiers,
         {},
         {},
-        settings.max_metadata_size,
+        settings,
     )
     return identifiers[0]
 
@@ -481,9 +479,7 @@ def entry_with_three_answers(kili, settings):
         author="c.durand",
         date="2026-03-11",
     )
-    import_entries(
-        kili, reference_id, [entry], settings.max_metadata_size
-    )
+    import_entries(kili, reference_id, [entry], settings)
     review_id = create_review_project(kili, "Revue")
     return reference_id, review_id, entry.question_id
 

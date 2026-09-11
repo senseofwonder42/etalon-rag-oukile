@@ -11,7 +11,7 @@ Every displayed string stays in French: this is the business interface.
 from .markdown_to_richtext import markdown_to_richtext
 from .richtext import IdGenerator, document, element_node, text_node
 from .schemas import Answer, ReferenceEntry, ReviewCase, Source
-from .sources import format_sources, group_by_document
+from .sources import document_url, format_sources, group_by_document
 
 VALIDATED_BACKGROUND = "#e8f5e9"
 CANDIDATE_BACKGROUND = "#fff3e0"
@@ -120,6 +120,7 @@ def _sources_table(
     sources: list[Source],
     generator: IdGenerator,
     styles: dict[str, str] | None = None,
+    url_template: str | None = None,
 ) -> list[dict]:
     """Render sources as a `doc_id` / `pages` table.
 
@@ -131,6 +132,8 @@ def _sources_table(
         generator: Id generator of the document.
         styles: CSS styles applied to every produced block, to place the
             whole section in a column.
+        url_template: Template of the document URLs. When set, a third
+            column carries the address of each document.
 
     Returns:
         The table followed by the copy-paste line, or a paragraph when
@@ -156,30 +159,36 @@ def _sources_table(
             {"backgroundColor": HEADER_BACKGROUND} if header else None,
         )
 
+    documents = group_by_document(sources)
+    urls = {
+        doc_id: document_url(
+            url_template, doc_id, pages[0] if pages else None
+        )
+        for doc_id, pages in documents
+    }
+    with_links = any(urls.values())
+
+    columns = ["Document", "Pages"] + (["Lien"] if with_links else [])
     head = element_node(
         "thead",
         [
             element_node(
                 "tr",
-                [cell("Document", True), cell("Pages", True)],
+                [cell(name, True) for name in columns],
                 generator,
             )
         ],
         generator,
     )
-    rows = [
-        element_node(
-            "tr",
-            [
-                cell(doc_id, False),
-                cell(
-                    ", ".join(str(page) for page in pages) or "—", False
-                ),
-            ],
-            generator,
-        )
-        for doc_id, pages in group_by_document(sources)
-    ]
+    rows = []
+    for doc_id, pages in documents:
+        cells = [
+            cell(doc_id, False),
+            cell(", ".join(str(page) for page in pages) or "—", False),
+        ]
+        if with_links:
+            cells.append(cell(urls[doc_id] or "—", False))
+        rows.append(element_node("tr", cells, generator))
     body = element_node("tbody", rows, generator)
     return _apply_styles(
         [
@@ -252,11 +261,15 @@ def _answer_block(
     return blocks
 
 
-def render_reference_asset(entry: ReferenceEntry) -> list[dict]:
+def render_reference_asset(
+    entry: ReferenceEntry, url_template: str | None = None
+) -> list[dict]:
     """Compose the rich text card of a reference entry (project A).
 
     Args:
         entry: Reference entry to render.
+        url_template: Template of the document URLs, shown in the sources
+            table when it is configured.
 
     Returns:
         The `json_content` of the asset.
@@ -287,7 +300,11 @@ def render_reference_asset(entry: ReferenceEntry) -> list[dict]:
         )
 
     blocks.append(_heading("h2", "Sources", generator))
-    blocks.extend(_sources_table(entry.sources, generator))
+    blocks.extend(
+        _sources_table(
+            entry.sources, generator, url_template=url_template
+        )
+    )
     return document(blocks)
 
 
@@ -295,6 +312,7 @@ def render_review_asset(
     case: ReviewCase,
     validated_answers: list[Answer],
     candidate_question: str | None = None,
+    url_template: str | None = None,
 ) -> list[dict]:
     """Compose the rich text card of a review case (project B).
 
@@ -316,6 +334,8 @@ def render_review_asset(
         validated_answers: Wordings already validated for this question.
         candidate_question: Question of the matched reference entry, when
             there is one.
+        url_template: Template of the document URLs, shown in the sources
+            table when it is configured.
 
     Returns:
         The `json_content` of the asset.
@@ -377,5 +397,9 @@ def render_review_asset(
     )
 
     blocks.append(_heading("h2", "Sources citées", generator))
-    blocks.extend(_sources_table(case.sources, generator, RIGHT_COLUMN))
+    blocks.extend(
+        _sources_table(
+            case.sources, generator, RIGHT_COLUMN, url_template
+        )
+    )
     return document(blocks)

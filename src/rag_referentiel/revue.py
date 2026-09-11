@@ -8,6 +8,7 @@ repository; only `promote.py` moves arbitrations over to project A.
 from loguru import logger
 from pydantic import BaseModel
 
+from .config import Settings
 from .interfaces import REVIEW_INTERFACE
 from .labels import (
     author_of,
@@ -19,6 +20,7 @@ from .labels import (
 from .normalisation import compute_review_external_id
 from .rendering import render_review_asset
 from .schemas import Answer, ReviewCase, ReviewStatus
+from .sources import display_metadata
 from .storage import prepare_payload
 
 CASE_FIELDS = [
@@ -109,7 +111,7 @@ def create_cases(
     external_ids: list[str],
     answers_by_question: dict[str, list[Answer]],
     candidate_questions: dict[str, str],
-    max_metadata_size: int,
+    settings: Settings,
 ) -> list[str]:
     """Import review cases into project B.
 
@@ -125,9 +127,9 @@ def create_cases(
             `question_id`. The card shows the one the case was matched
             to — the candidate entry on an uncertain match, the matched
             entry otherwise.
-        max_metadata_size: Metadata fallback threshold, in bytes. The
-            import being batched, the fallback is decided here on the
-            measured size, without a retry after a server refusal.
+        settings: Runtime settings. The import being batched, the
+            metadata fallback is decided on the measured size, without a
+            retry after a server refusal.
 
     Returns:
         The `external_id` values of the created assets.
@@ -138,6 +140,7 @@ def create_cases(
     contents: list[list[dict]] = []
     metadatas: list[dict] = []
 
+    template = settings.document_url_template
     for case in cases:
         rendering = render_review_asset(
             case,
@@ -147,9 +150,12 @@ def create_cases(
             candidate_questions.get(
                 case.question_id_candidat or case.question_id
             ),
+            template,
         )
         payload = prepare_payload(
-            case.model_dump(), rendering, max_metadata_size
+            case.model_dump() | display_metadata(case.sources, template),
+            rendering,
+            settings.max_metadata_size,
         )
         contents.append(payload.json_content)
         metadatas.append(payload.json_metadata)

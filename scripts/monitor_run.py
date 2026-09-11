@@ -276,7 +276,7 @@ def main() -> None:
         external_ids,
         {entry.question_id: entry.answers for entry in entries},
         {entry.question_id: entry.question for entry in entries},
-        config.max_metadata_size,
+        config,
     )
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
