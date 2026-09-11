@@ -30,7 +30,7 @@ EXTERNAL_ID = "sonde_richtext"
 #: colonne « Lien ».
 LONG_URL = (
     "https://contoso.sharepoint.com/sites/assurance/Documents/"
-    "DCON_ConditionGenerales_MRH_202605.pdf#page=22"
+    "DCON_ConditionsGénérales_MRH_202605.pdf#page=22"
 )
 
 
@@ -223,7 +223,7 @@ def build_probe_asset() -> list[dict]:
                         element_node(
                             "tr",
                             [
-                                cell("DCON_ConditionGenerales_MRH_202605.pdf"),
+                                cell("DCON_ConditionsGénérales_MRH_202605.pdf"),
                                 cell("22, 23, 24"),
                                 cell(LONG_URL, text_styles=LINK_TEXT_STYLES),
                             ],

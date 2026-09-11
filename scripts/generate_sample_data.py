@@ -18,7 +18,7 @@ CG_AUTO = "cg_auto_2024.pdf"
 # Noms réels des pièces contractuelles MRH (multirisque habitation) : ils
 # éprouvent la largeur des colonnes du tableau des sources et la longueur
 # des URL.
-CG_MRH = "DCON_ConditionGenerales_MRH_202605.pdf"
+CG_MRH = "DCON_ConditionsGénérales_MRH_202605.pdf"
 SOUSCRIRE_MRH = "DCON_CommentSouscrire_MRH_202605.pdf"
 DIPA_MRH = "DCON_DIPA_MRH_202605.pdf"
 GUIDE = "guide_sinistres_2025.pdf"

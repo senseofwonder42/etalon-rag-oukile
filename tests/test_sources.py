@@ -169,7 +169,7 @@ def test_the_url_metadata_key_needs_a_single_document():
 
 def test_a_real_document_name_round_trips():
     typed = (
-        "DCON_ConditionGenerales_MRH_202605.pdf:22 23 24, "
+        "DCON_ConditionsGénérales_MRH_202605.pdf:22 23 24, "
         "DCON_DIPA_MRH_202605.pdf:1"
     )
     parsed, unreadable = parse_sources(typed)
@@ -178,8 +178,8 @@ def test_a_real_document_name_round_trips():
 
 
 def test_an_unaccented_document_name_is_left_as_is_in_its_url():
-    url = document_url(TEMPLATE, "DCON_ConditionGenerales_MRH_202605.pdf", 5)
-    assert url == "https://sp.exemple.fr/docs/DCON_ConditionGenerales_MRH_202605.pdf#page=5"
+    url = document_url(TEMPLATE, "DCON_ConditionsGénérales_MRH_202605.pdf", 5)
+    assert url == "https://sp.exemple.fr/docs/DCON_ConditionsGénérales_MRH_202605.pdf#page=5"
     assert "%" not in url
 
 

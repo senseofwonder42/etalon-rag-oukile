@@ -603,7 +603,7 @@ des URL lisibles.
 
 Pour l'essayer sur la démonstration, renseigner le gabarit dans `.env`
 puis lancer `demo.py --create` : les questions d'assurance habitation
-citent les pièces MRH réelles — `DCON_ConditionGenerales_MRH_202605.pdf`,
+citent les pièces MRH réelles — `DCON_ConditionsGénérales_MRH_202605.pdf`,
 `DCON_CommentSouscrire_MRH_202605.pdf`, `DCON_DIPA_MRH_202605.pdf`.
 
 **Réserve importante.** Le format rich text documenté n'a **aucun nœud
