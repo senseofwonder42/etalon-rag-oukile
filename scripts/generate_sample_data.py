@@ -56,7 +56,7 @@ REFERENCE_ENTRIES = [
             "Le délai de déclaration d'un sinistre automobile est de "
             "**5 jours ouvrés** après la survenance du sinistre.",
         ],
-        "sources": [_source(CG_AUTO, 12)],
+        "sources": [_source(CG_AUTO, 12), _source(CG_AUTO, 13)],
     },
     {
         "question": "Quel est le délai de déclaration d'un vol de véhicule ?",
@@ -65,7 +65,11 @@ REFERENCE_ENTRIES = [
             "sous **2 jours ouvrés**, après dépôt de plainte auprès des "
             "services de police ou de gendarmerie.",
         ],
-        "sources": [_source(CG_AUTO, 14), _source(GUIDE, 3)],
+        "sources": [
+            _source(CG_AUTO, 14),
+            _source(CG_AUTO, 15),
+            _source(GUIDE, 3),
+        ],
     },
     {
         "question": "Comment déclarer un dégât des eaux dans mon logement ?",
@@ -79,7 +83,12 @@ REFERENCE_ENTRIES = [
             "un constat amiable si un tiers est impliqué et les "
             "justificatifs des dommages.",
         ],
-        "sources": [_source(CG_HAB, 22), _source(GUIDE, 7)],
+        "sources": [
+            _source(CG_HAB, 22),
+            _source(CG_HAB, 23),
+            _source(CG_HAB, 24),
+            _source(GUIDE, 7),
+        ],
     },
     {
         "question": "Quelle est la franchise en cas de bris de glace ?",
@@ -149,7 +158,11 @@ REFERENCE_ENTRIES = [
             "- les photos des dommages et, le cas échéant, le procès-"
             "verbal des forces de l'ordre.",
         ],
-        "sources": [_source(GUIDE, 5), _source(CG_AUTO, 18)],
+        "sources": [
+            _source(GUIDE, 5),
+            _source(GUIDE, 6),
+            _source(CG_AUTO, 18),
+        ],
     },
     {
         "question": (
@@ -200,7 +213,7 @@ PRODUCTION_RUN = [
             "**5 jours ouvrés** à compter du jour où vous en avez eu "
             "connaissance."
         ),
-        "sources": [_source(CG_AUTO, 12)],
+        "sources": [_source(CG_AUTO, 12), _source(CG_AUTO, 13)],
     },
     # --- Même run, même question : deux occurrences appariées pareil ----
     {
@@ -257,7 +270,11 @@ PRODUCTION_RUN = [
             "un constat amiable si un tiers est impliqué et les "
             "justificatifs des dommages."
         ),
-        "sources": [_source(CG_HAB, 22)],
+        "sources": [
+            _source(CG_HAB, 22),
+            _source(CG_HAB, 23),
+            _source(GUIDE, 7),
+        ],
     },
     {
         "run_id": "run_106",

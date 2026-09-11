@@ -1,0 +1,107 @@
+from rag_referentiel.schemas import Source
+from rag_referentiel.sources import format_sources, parse_sources
+
+
+def pages(text):
+    parsed, _ = parse_sources(text)
+    return [(s.doc_id, s.page) for s in parsed]
+
+
+def test_canonical_format():
+    assert pages("cg_auto.pdf:12 14, guide.pdf:3") == [
+        ("cg_auto.pdf", 12),
+        ("cg_auto.pdf", 14),
+        ("guide.pdf", 3),
+    ]
+
+
+def test_a_single_page_needs_no_prefix():
+    assert pages("cg_auto.pdf:12") == [("cg_auto.pdf", 12)]
+
+
+def test_a_document_without_a_page():
+    assert pages("guide.pdf") == [("guide.pdf", None)]
+
+
+def test_page_prefixes_are_tolerated():
+    assert (
+        pages("doc.pdf:p12 P14")
+        == pages("doc.pdf:page 12 page 14")
+        == pages("doc.pdf:p. 12 / p. 14")
+        == [("doc.pdf", 12), ("doc.pdf", 14)]
+    )
+
+
+def test_a_page_range_is_expanded():
+    assert pages("doc.pdf:12-14") == [
+        ("doc.pdf", 12),
+        ("doc.pdf", 13),
+        ("doc.pdf", 14),
+    ]
+
+
+def test_an_absurd_range_is_reported_not_expanded():
+    parsed, unreadable = parse_sources("doc.pdf:1-9999")
+    assert [(s.doc_id, s.page) for s in parsed] == [("doc.pdf", None)]
+    assert unreadable == ["doc.pdf:1-9999"]
+
+
+def test_a_lone_page_carries_on_with_the_last_document():
+    # C'est l'ancien format : il continue de fonctionner.
+    assert pages("doc.pdf:12, 14, p31") == [
+        ("doc.pdf", 12),
+        ("doc.pdf", 14),
+        ("doc.pdf", 31),
+    ]
+
+
+def test_a_lone_page_without_any_document_is_unreadable():
+    parsed, unreadable = parse_sources("14, doc.pdf:3")
+    assert [(s.doc_id, s.page) for s in parsed] == [("doc.pdf", 3)]
+    assert unreadable == ["14"]
+
+
+def test_decoration_and_spacing_are_repaired():
+    assert pages("«doc.pdf : 12» ; (autre.pdf:3).") == [
+        ("doc.pdf", 12),
+        ("autre.pdf", 3),
+    ]
+
+
+def test_duplicates_are_dropped():
+    assert pages("doc.pdf:12 12, doc.pdf:12") == [("doc.pdf", 12)]
+
+
+def test_an_unreadable_page_is_reported_without_failing_the_batch():
+    parsed, unreadable = parse_sources("doc.pdf:page, doc2.pdf:12")
+    assert ("doc2.pdf", 12) in [(s.doc_id, s.page) for s in parsed]
+    assert unreadable == ["doc.pdf:page"]
+
+
+def test_an_empty_input():
+    assert parse_sources("") == ([], [])
+    assert parse_sources("  ,  ; ") == ([], [])
+
+
+def test_formatting_groups_the_pages_of_a_document():
+    sources = [
+        Source(doc_id="cg_auto.pdf", page=12),
+        Source(doc_id="cg_auto.pdf", page=14),
+        Source(doc_id="guide.pdf", page=3),
+    ]
+    assert format_sources(sources) == "cg_auto.pdf:12 14, guide.pdf:3"
+
+
+def test_formatting_a_document_without_a_page():
+    assert format_sources([Source(doc_id="guide.pdf")]) == "guide.pdf"
+
+
+def test_formatting_an_empty_list():
+    assert format_sources([]) == ""
+
+
+def test_formatting_then_parsing_is_stable():
+    typed = "cg_auto.pdf:12 14 31, guide.pdf:3, autre.pdf"
+    parsed, unreadable = parse_sources(typed)
+    assert unreadable == []
+    assert format_sources(parsed) == typed

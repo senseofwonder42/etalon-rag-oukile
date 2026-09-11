@@ -9,14 +9,24 @@ Job names, category codes and every displayed string stay in French: they
 are the interface the business team reads.
 """
 
-SOURCES_FORMAT = "doc.pdf:12, autre.pdf:3"
-#: Plusieurs pages d'un même document : répéter la page seule, préfixée
-#: par « p », après le document.
-SOURCES_FORMAT_MULTIPAGE = "doc.pdf:p12, p14, autre.pdf:3"
+from .rendering import answer_label
+
+#: Format de saisie des sources : un document par fragment, ses pages
+#: après le deux-points, séparées par des espaces.
+SOURCES_FORMAT = "doc.pdf:12 14, autre.pdf:3"
 #: Repères des formulations, tels qu'affichés sur la carte. Le plafond de
 #: variantes étant de 5 et les repères renumérotés à chaque écriture, la
 #: liste est finie et stable.
 ANSWER_MARKERS = ("a1", "a2", "a3", "a4", "a5")
+
+
+def _answer_categories() -> dict[str, str]:
+    """Build the answer categories, labelled as they are on the card.
+
+    Returns:
+        A mapping of marker to displayed label, `a2` -> `Réponse 2`.
+    """
+    return {marker: answer_label(marker) for marker in ANSWER_MARKERS}
 
 
 def _radio_job(
@@ -97,11 +107,11 @@ REFERENCE_INTERFACE: dict = {
         "FORMULATION_CIBLE": _radio_job(
             instruction=(
                 "Pour corriger une formulation existante, choisir son "
-                "repère tel qu'il apparaît sur la carte, puis écrire le "
+                "numéro tel qu'il apparaît sur la carte, puis écrire le "
                 "texte corrigé ci-dessous. Laisser vide pour ajouter une "
                 "nouvelle formulation."
             ),
-            categories={marker: marker for marker in ANSWER_MARKERS},
+            categories=_answer_categories(),
             required=False,
         ),
         "REPONSE_VALIDEE": _transcription_job(
@@ -114,18 +124,20 @@ REFERENCE_INTERFACE: dict = {
         ),
         "FORMULATIONS_A_RETIRER": _checkbox_job(
             instruction=(
-                "Repères des formulations à retirer du référentiel "
+                "Numéros des formulations à retirer du référentiel "
                 "(plusieurs choix possibles)."
             ),
-            categories={marker: marker for marker in ANSWER_MARKERS},
+            categories=_answer_categories(),
             required=False,
         ),
         "SOURCES_CORRIGEES": _transcription_job(
             instruction=(
                 "Liste corrigée des sources, qui **remplace** la liste "
-                f"actuelle. Format « {SOURCES_FORMAT} » ; plusieurs pages "
-                f"d'un même document : « {SOURCES_FORMAT_MULTIPAGE} ». "
-                "Laisser vide si rien à changer."
+                f"actuelle. Format « {SOURCES_FORMAT} » : un document par "
+                "élément, ses pages après le deux-points, séparées par des "
+                "espaces. La liste actuelle est rappelée en bas de la "
+                "carte, prête à copier-coller. Laisser vide si rien à "
+                "changer."
             ),
             required=False,
         ),
@@ -174,8 +186,10 @@ REVIEW_INTERFACE: dict = {
         "SOURCES_CORRIGEES": _transcription_job(
             instruction=(
                 "Liste corrigée des sources, qui **remplace** la liste "
-                f"citée. Format « {SOURCES_FORMAT} » ; plusieurs pages "
-                f"d'un même document : « {SOURCES_FORMAT_MULTIPAGE} »."
+                f"citée. Format « {SOURCES_FORMAT} » : un document par "
+                "élément, ses pages après le deux-points, séparées par des "
+                "espaces. La liste citée est rappelée en bas de la carte, "
+                "prête à copier-coller."
             ),
             required=False,
         ),

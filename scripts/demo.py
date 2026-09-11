@@ -93,9 +93,10 @@ def create_demo(arguments: argparse.Namespace, config: Settings) -> None:
     print(f"  {project_url(config, review_id)}")
     print(f"    {len(cases)} cas à arbitrer.")
     print(
-        "\nÀ regarder : le rendu rich text des cartes, les repères a1, a2… "
-        "en tête\nde chaque formulation, les libellés des jobs, et le fait "
-        "que le verdict\ndu juge n'apparaît nulle part à l'écran."
+        "\nÀ regarder : le rendu rich text des cartes, le sous-titre "
+        "« Réponse 1 »\nau-dessus de chaque formulation, la liste des "
+        "sources rappelée sous le\ntableau et prête à copier-coller, et le "
+        "fait que le verdict du juge\nn'apparaît nulle part à l'écran."
     )
 
 

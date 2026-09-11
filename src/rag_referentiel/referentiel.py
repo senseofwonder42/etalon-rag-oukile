@@ -6,7 +6,6 @@ coming from production goes through `promote_batch`.
 """
 
 import json
-import re
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -38,6 +37,7 @@ from .schemas import (
     Status,
     today,
 )
+from .sources import parse_sources
 from .storage import AssetPayload, prepare_payload, write_with_fallback
 
 ENTRY_FIELDS = [
@@ -50,13 +50,6 @@ ENTRY_FIELDS = [
     "labels.jsonResponse",
     "labels.labelType",
 ]
-
-_SOURCE_PATTERN = re.compile(
-    r"^(?P<doc>[^:]+?)(?::p?(?P<page>\d+))?$", re.I
-)
-_PAGE_ONLY_PATTERN = re.compile(r"^p\.?\s*(?P<page>\d+)$", re.I)
-_SOURCE_SEPARATORS = re.compile(r"[,\n;]")
-
 
 class UnknownAnswerMarkerError(ValueError):
     """The designated answer marker does not exist on the entry."""
@@ -463,54 +456,6 @@ def remove_answers(
     entry.answers = remaining
     renumber_answers(entry)
     return removed, unknown
-
-
-def parse_sources(text: str) -> tuple[list[Source], list[str]]:
-    """Parse a source list shaped as `doc.pdf:12, autre.pdf:3`.
-
-    Several pages of the same document are written by repeating the page
-    alone after the document: `doc1.pdf:p12, p14` yields two sources on
-    `doc1.pdf`. The `p` prefix is optional on a page following a document
-    (`doc1.pdf:12`) but **mandatory** on a standalone page, without which
-    a numeric fragment could not be told apart from a document name.
-
-    Parsing is tolerant: an unreadable fragment is reported and skipped
-    rather than failing the batch.
-
-    Args:
-        text: What the annotator typed.
-
-    Returns:
-        The pair (parsed sources, unreadable fragments).
-    """
-    sources: list[Source] = []
-    unreadable: list[str] = []
-    last_doc: str | None = None
-    for fragment in _SOURCE_SEPARATORS.split(text or ""):
-        cleaned = fragment.strip()
-        if not cleaned:
-            continue
-
-        page_only = _PAGE_ONLY_PATTERN.match(cleaned)
-        if page_only:
-            if last_doc is None:
-                unreadable.append(cleaned)
-                continue
-            sources.append(
-                Source(doc_id=last_doc, page=int(page_only["page"]))
-            )
-            continue
-
-        found = _SOURCE_PATTERN.match(cleaned)
-        if not found:
-            unreadable.append(cleaned)
-            continue
-        page = found.group("page")
-        last_doc = found.group("doc").strip()
-        sources.append(
-            Source(doc_id=last_doc, page=int(page) if page else None)
-        )
-    return sources, unreadable
 
 
 def merge_sources(

@@ -11,6 +11,7 @@ Every displayed string stays in French: this is the business interface.
 from .markdown_to_richtext import markdown_to_richtext
 from .richtext import IdGenerator, document, element_node, text_node
 from .schemas import Answer, ReferenceEntry, ReviewCase, Source
+from .sources import format_sources
 
 VALIDATED_BACKGROUND = "#e8f5e9"
 CANDIDATE_BACKGROUND = "#fff3e0"
@@ -135,17 +136,48 @@ def _sources_table(
         for source in sources
     ]
     body = element_node("tbody", rows, generator)
-    return [element_node("table", [head, body], generator)]
+    return [
+        element_node("table", [head, body], generator),
+        _paragraph(
+            "À copier-coller dans « Sources corrigées », puis à modifier :",
+            generator,
+            styles={"color": GREY},
+        ),
+        _paragraph(
+            format_sources(sources),
+            generator,
+            marks={"code"},
+            styles={
+                "backgroundColor": HEADER_BACKGROUND,
+                "padding": "4px 8px",
+            },
+        ),
+    ]
+
+
+def answer_label(marker: str) -> str:
+    """Turn an answer marker into the label shown to the annotator.
+
+    The same label appears as the heading of the wording on the card and
+    as the category of the `FORMULATION_CIBLE` and
+    `FORMULATIONS_A_RETIRER` jobs, so the annotator picks what they read.
+
+    Args:
+        marker: Answer marker, `a1` to `a5`.
+
+    Returns:
+        A label such as `Réponse 2`; the marker itself if it is not
+        shaped as expected.
+    """
+    if marker.startswith("a") and marker[1:].isdigit():
+        return f"Réponse {marker[1:]}"
+    return marker
 
 
 def _answer_block(
     answer: Answer, generator: IdGenerator, background: str
 ) -> list[dict]:
-    """Render a validated wording and where it comes from.
-
-    The marker (`a1`, `a2`, …) opens the provenance line: it is what the
-    annotator picks in the `FORMULATION_CIBLE` and
-    `FORMULATIONS_A_RETIRER` jobs of project A.
+    """Render a validated wording, headed by its number.
 
     Args:
         answer: Validated wording.
@@ -155,13 +187,16 @@ def _answer_block(
     Returns:
         The block nodes of the answer.
     """
-    blocks = _apply_styles(
-        markdown_to_richtext(answer.text, generator),
-        {"backgroundColor": background, "padding": "4px 8px"},
+    blocks = [_heading("h3", answer_label(answer.id), generator)]
+    blocks.extend(
+        _apply_styles(
+            markdown_to_richtext(answer.text, generator),
+            {"backgroundColor": background, "padding": "4px 8px"},
+        )
     )
     provenance = (
-        f"{answer.id} · origine : {answer.origine} · "
-        f"auteur : {answer.auteur} · date : {answer.date}"
+        f"origine : {answer.origine} · auteur : {answer.auteur} · "
+        f"date : {answer.date}"
     )
     if answer.run_id:
         provenance += f" · run : {answer.run_id}"
@@ -216,6 +251,10 @@ def render_review_asset(
     The LLM-as-judge verdict is **never** rendered: showing it would
     anchor the annotator on the very opinion the review audits.
 
+    On an uncertain match the proposed reference question is shown right
+    above the wordings, since those wordings belong to it. On a brand new
+    question the whole wordings section disappears.
+
     Args:
         case: Review case to render.
         validated_answers: Wordings already validated for this question.
@@ -241,29 +280,6 @@ def render_review_asset(
         )
     )
 
-    blocks.append(_heading("h2", "Formulations déjà validées", generator))
-    if not validated_answers:
-        blocks.append(
-            _paragraph(
-                "Aucune : cette question n'est pas encore au référentiel.",
-                generator,
-                styles={"color": GREY},
-            )
-        )
-    for answer in validated_answers:
-        blocks.extend(_answer_block(answer, generator, VALIDATED_BACKGROUND))
-
-    blocks.append(_heading("h2", "Réponse générée à arbitrer", generator))
-    blocks.extend(
-        _apply_styles(
-            markdown_to_richtext(case.candidate_answer, generator),
-            {"backgroundColor": CANDIDATE_BACKGROUND, "padding": "4px 8px"},
-        )
-    )
-
-    blocks.append(_heading("h2", "Sources citées", generator))
-    blocks.extend(_sources_table(case.sources, generator))
-
     if case.motif == "APPARIEMENT_INCERTAIN" and candidate_question:
         blocks.append(
             _heading("h2", "Question du référentiel proposée", generator)
@@ -278,4 +294,32 @@ def render_review_asset(
                 },
             )
         )
+
+    # Sur une question inédite il n'y a rien à montrer : la section
+    # entière disparaît plutôt que d'afficher un « aucune ».
+    if validated_answers:
+        blocks.append(
+            _heading(
+                "h2",
+                "Formulations validées pour cette question"
+                if candidate_question
+                else "Formulations déjà validées",
+                generator,
+            )
+        )
+        for answer in validated_answers:
+            blocks.extend(
+                _answer_block(answer, generator, VALIDATED_BACKGROUND)
+            )
+
+    blocks.append(_heading("h2", "Réponse générée à arbitrer", generator))
+    blocks.extend(
+        _apply_styles(
+            markdown_to_richtext(case.candidate_answer, generator),
+            {"backgroundColor": CANDIDATE_BACKGROUND, "padding": "4px 8px"},
+        )
+    )
+
+    blocks.append(_heading("h2", "Sources citées", generator))
+    blocks.extend(_sources_table(case.sources, generator))
     return document(blocks)

@@ -78,13 +78,13 @@ parcourir dans l'ordre, la première fois.
     (`services/label_data_parsing/category.py`). Vérifier que la réponse
     renvoyée est bien une liste de catégories, et que le job s'affiche
     en cases à cocher.
-12. **Course sur les repères de formulation.** Les formulations sont
+12. **Course sur les numéros de formulation.** Les formulations sont
     renumérotées à chaque écriture. Si `promote.py` tourne pendant qu'un
-    métier a une carte ouverte, le repère qu'il a sous les yeux peut
-    avoir changé au moment où il enregistre. En pratique annotation et
-    promotion ne sont pas concurrentes ; si elles le deviennent, il
-    faudra passer les repères en identifiants stables et étendre les
-    catégories du job au-delà de `a5`.
+    métier a une carte ouverte, le « Réponse 2 » qu'il a sous les yeux
+    peut avoir changé au moment où il enregistre. En pratique annotation
+    et promotion ne sont pas concurrentes ; si elles le deviennent, il
+    faudra passer à des identifiants stables et étendre les catégories du
+    job au-delà de cinq.
 13. **Catégories des `json_interface`.** Les catégories sont écrites
     `{"CODE": {"name": "Libellé", "children": []}}`, sans clé `id`. Le SDK
     ne valide pas le `json_interface` : il le sérialise et l'envoie.
@@ -226,9 +226,9 @@ est journalisé en `ERROR`.
 | Job | Type | Requis | Rôle |
 | --- | --- | --- | --- |
 | `ENTREE_TOUJOURS_VALIDE` | radio `OUI` / `NON` | oui | campagne de revérification |
-| `FORMULATION_CIBLE` | radio `a1` … `a5` | non | repère de la formulation à corriger ; vide = ajout |
+| `FORMULATION_CIBLE` | radio « Réponse 1 » … « Réponse 5 » | non | formulation à corriger ; vide = ajout |
 | `REPONSE_VALIDEE` | transcription | non | texte de la formulation, ajoutée ou substituée |
-| `FORMULATIONS_A_RETIRER` | cases à cocher `a1` … `a5` | non | retirer une ou plusieurs formulations |
+| `FORMULATIONS_A_RETIRER` | cases à cocher « Réponse 1 » … « Réponse 5 » | non | retirer une ou plusieurs formulations |
 | `SOURCES_CORRIGEES` | transcription | non | liste corrigée, qui **remplace** la liste actuelle |
 
 - `OUI` sur `ENTREE_TOUJOURS_VALIDE` repasse l'entrée en `ACTIF` et
@@ -238,16 +238,18 @@ est journalisé en `ERROR`.
 
 ### Corriger une formulation parmi plusieurs
 
-Chaque formulation porte un **repère** — `a1`, `a2`, … — affiché en tête
-de sa ligne de provenance sur la carte. C'est lui qu'on désigne :
+Chaque formulation est précédée sur la carte d'un sous-titre
+**« Réponse 1 »**, **« Réponse 2 »**, … — le même libellé que les
+catégories des jobs, si bien que l'annotateur choisit ce qu'il lit. Le
+code sous-jacent reste `a1`, `a2`, … dans la metadata :
 
 | Ce que remplit le métier | Effet |
 | --- | --- |
 | `REPONSE_VALIDEE` seule | la formulation est **ajoutée**, sauf quasi-doublon |
-| `FORMULATION_CIBLE = a2` + `REPONSE_VALIDEE` | `a2` est **remplacée** ; son origine repasse à `metier`, son `run_id` est effacé |
-| `FORMULATION_CIBLE` sans texte | incohérent : ignoré et journalisé |
-| repère inexistant (`a5` sur une entrée à trois formulations) | signalé dans `unknown_markers` du rapport, le lot continue |
-| `FORMULATIONS_A_RETIRER = a1, a3` | les deux formulations sont retirées ; la **dernière** formulation d'une entrée n'est jamais retirable |
+| « Réponse 2 » + `REPONSE_VALIDEE` | `a2` est **remplacée** ; son origine repasse à `metier`, son `run_id` est effacé |
+| une réponse désignée sans texte | incohérent : ignoré et journalisé |
+| numéro inexistant (« Réponse 5 » sur une entrée qui en compte trois) | signalé dans `unknown_markers` du rapport, le lot continue |
+| « Réponse 1 » et « Réponse 3 » cochées | les deux formulations sont retirées ; la **dernière** formulation d'une entrée n'est jamais retirable |
 
 Un remplacement ciblé **n'est pas soumis à la règle du quasi-doublon** :
 une petite correction de `a2` est un arbitrage métier explicite, pas une
@@ -255,14 +257,14 @@ variante à écarter. Si le texte corrigé devient très proche d'une autre
 formulation, les deux sont conservées et un avertissement est journalisé.
 
 Après tout retrait ou ajout, les formulations sont **renumérotées**
-`a1`, `a2`, … sans trou : les repères restent dans la plage `a1`–`a5`
-fixée par le plafond de variantes, et la liste de catégories du job reste
-donc finie et stable.
+`a1`, `a2`, … sans trou : les numéros restent dans la plage fixée par le
+plafond de variantes, et la liste de catégories du job reste donc finie
+et stable.
 
 ### Corriger plusieurs formulations
 
-Une correction par enregistrement : on désigne `a2`, on sauvegarde, on
-rouvre l'asset et on désigne `a4`. `promote.py` consomme **tous** les
+Une correction par enregistrement : on désigne « Réponse 2 », on
+sauvegarde, on rouvre l'asset et on désigne « Réponse 4 ». `promote.py` consomme **tous** les
 labels humains créés depuis le filigrane `derniere_promotion` de
 l'entrée, du plus ancien au plus récent, puis avance le filigrane. C'est
 lui qui porte l'idempotence de la campagne : un label déjà consommé n'est
@@ -296,24 +298,35 @@ Ce que `promote.py` en fait :
 
 ### Format des sources
 
-```
-cg_auto_2024.pdf:12, guide_sinistres.pdf:3
-```
-
-Plusieurs pages d'un même document : répéter la page seule, **préfixée
-par `p`**, après le document.
+Un document par élément, ses pages après le deux-points, séparées par des
+espaces :
 
 ```
-cg_auto_2024.pdf:p12, p14, p31, guide_sinistres.pdf:2, p7
+cg_auto_2024.pdf:12 14 31, guide_sinistres.pdf:2 7
 ```
 
-donne cinq sources : trois sur `cg_auto_2024.pdf` (pages 12, 14, 31) et
-deux sur `guide_sinistres.pdf` (pages 2 et 7). Le préfixe `p` est
-facultatif juste après un document (`doc.pdf:12`) mais **obligatoire**
-sur une page seule, faute de quoi un fragment numérique serait
-indiscernable d'un nom de document. Une page seule sans document qui la
-précède, ou tout autre fragment illisible, est signalée dans
-`unreadable_sources` du rapport sans faire échouer le lot.
+donne cinq sources. Une page n'apparaît donc jamais seule et ne demande
+jamais de préfixe : c'est la même écriture qu'il y ait une page ou dix.
+
+**La liste courante est rappelée sous le tableau des sources de chaque
+carte, déjà dans ce format** : l'annotateur la copie, modifie ce qu'il
+faut, et colle le résultat dans « Sources corrigées ».
+
+L'analyse répare les approximations de saisie plutôt que de les rejeter
+(`sources.py`) :
+
+| Saisie | Lue comme |
+| --- | --- |
+| `doc.pdf:p12 P14`, `doc.pdf:page 12`, `doc.pdf:p. 12` | pages 12 et 14 |
+| `doc.pdf:12/14`, `doc.pdf:12+14`, `doc.pdf:12 & 14` | pages 12 et 14 |
+| `doc.pdf:12-14` | pages 12, 13, 14 (intervalle plafonné à `MAX_RANGE_LENGTH`) |
+| `doc.pdf:12, 14` | page 14 rattachée à `doc.pdf` — l'ancienne écriture continue de marcher |
+| `«doc.pdf : 12» ; (autre.pdf:3).` | guillemets, parenthèses, espaces et point final ignorés |
+| `doc.pdf:12 12, doc.pdf:12` | une seule source, les doublons sont écartés |
+
+Ce qui reste illisible — une page seule sans document qui la précède, un
+intervalle absurde, un mot à la place d'un numéro — est signalé dans
+`unreadable_sources` du rapport, sans faire échouer le lot.
 
 La saisie **remplace la liste entière** : c'est ce qui permet de corriger
 plusieurs sources d'un coup, mais taper une seule ligne supprime les
@@ -451,8 +464,11 @@ Projet B — revue prod  : cl…
   fond vert clair, sa provenance (origine, auteur, date) et ses sources en
   tableau ;
 - projet B : la question en `h1`, un encadré expliquant le motif de mise
-  en revue, les formulations déjà validées en vert, la réponse générée sur
-  fond ambre, les sources en tableau ;
+  en revue, la réponse générée sur fond ambre, les sources en tableau
+  suivies de la liste prête à copier-coller ; sur une question inédite il
+  n'y a pas de section « formulations validées », et sur un appariement
+  incertain la question du référentiel proposée est affichée juste
+  au-dessus des formulations qui s'y rattachent ;
 - les libellés des jobs, en français, et le fait que `MEME_QUESTION`
   précise qu'il ne concerne que les appariements incertains ;
 - **le verdict du juge n'apparaît nulle part** : il est en metadata.
@@ -545,8 +561,9 @@ automatique**.
 | réponse candidate identique à une formulation existante | écartée comme quasi-doublon, `version` inchangée |
 | deux occurrences du même run appariées à la même question | `compute_external_ids` suffixe le second `external_id` (`…__run_42_2`) |
 | metadata trop volumineuse | repli documenté, textes conservés dans le rendu |
-| plusieurs pages d'un même document | `doc.pdf:p12, p14` — la page seule prolonge le dernier document nommé |
-| repère de formulation inexistant | signalé au rapport, le lot continue |
+| plusieurs pages d'un même document | `doc.pdf:12 14` — les pages suivent leur document |
+| approximation de saisie des sources | réparée quand c'est possible, signalée sinon (voir « Format des sources ») |
+| numéro de formulation inexistant | signalé au rapport, le lot continue |
 | retrait de la dernière formulation | refusé : une entrée sans réponse ne sert à rien |
 | deux corrections successives sur la même entrée | les deux labels sont consommés, dans l'ordre, grâce au filigrane |
 
@@ -564,7 +581,7 @@ comme un arbitrage humain.
 ## Développement
 
 ```bash
-uv run pytest          # 111 tests, entièrement hors ligne
+uv run pytest          # 126 tests, entièrement hors ligne
 uv run ruff check .
 ```
 
@@ -596,6 +613,7 @@ src/rag_referentiel/
   richtext.py             briques du format rich text Kili
   rendering.py            composition des cartes
   markdown_to_richtext.py conversion du markdown de la RAG
+  sources.py              analyse et mise en forme des listes de sources
   matching.py             QuestionMatcher, HybridMatcher, LexicalMatcher
   embeddings.py           EmbeddingBackend, Jina, FakeEmbeddings
   judge.py                AnswerJudge, Claude et hors ligne

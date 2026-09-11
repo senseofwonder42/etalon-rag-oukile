@@ -8,7 +8,6 @@ from rag_referentiel.referentiel import (
     create_project,
     import_entries,
     load_entries,
-    parse_sources,
     promote_batch,
     remove_answers,
     replace_answer,
@@ -711,41 +710,3 @@ def test_renumbering_after_a_removal():
     remove_answers(entry, ["a2"])
     assert [a.id for a in entry.answers] == ["a1", "a2"]
     assert [a.text for a in entry.answers] == ["Un.", "Trois."]
-
-
-def test_tolerant_source_parsing():
-    sources, unreadable = parse_sources(
-        "cg_auto.pdf:12, guide.pdf, autre.pdf:page, , cg_hab.pdf:3"
-    )
-    assert [(s.doc_id, s.page) for s in sources] == [
-        ("cg_auto.pdf", 12),
-        ("guide.pdf", None),
-        ("cg_hab.pdf", 3),
-    ]
-    assert unreadable == ["autre.pdf:page"]
-
-
-def test_several_pages_of_the_same_document():
-    sources, unreadable = parse_sources("doc1.pdf:p12, p14, p31")
-    assert [(s.doc_id, s.page) for s in sources] == [
-        ("doc1.pdf", 12),
-        ("doc1.pdf", 14),
-        ("doc1.pdf", 31),
-    ]
-    assert unreadable == []
-
-
-def test_multiple_pages_then_a_document_change():
-    sources, _ = parse_sources("doc1.pdf:p12, p14, autre.pdf:2, p7")
-    assert [(s.doc_id, s.page) for s in sources] == [
-        ("doc1.pdf", 12),
-        ("doc1.pdf", 14),
-        ("autre.pdf", 2),
-        ("autre.pdf", 7),
-    ]
-
-
-def test_a_standalone_page_without_a_document_is_unreadable():
-    sources, unreadable = parse_sources("p12, doc.pdf:3")
-    assert [(s.doc_id, s.page) for s in sources] == [("doc.pdf", 3)]
-    assert unreadable == ["p12"]

@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **111 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **126 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -57,8 +57,10 @@ retirer une. Trois jobs ont été ajoutés au projet A :
   remplacer ; vide, le texte est ajouté comme avant ;
 - `FORMULATIONS_A_RETIRER` (cases à cocher) retire une ou plusieurs
   formulations d'un coup ;
-- les repères `a1`, `a2`, … sont désormais affichés en tête de la ligne
-  de provenance de chaque formulation sur la carte, et **renumérotés** à
+- chaque formulation est précédée d'un sous-titre « Réponse 1 »,
+  « Réponse 2 », … — le même libellé que les catégories des deux jobs,
+  de sorte que l'annotateur choisit ce qu'il lit. Le code `a1`, `a2`, …
+  reste celui de la metadata, et les formulations sont **renumérotées** à
   chaque écriture pour rester dans la plage fixée par le plafond.
 
 Les corrections multiples passent par **plusieurs enregistrements** :
@@ -142,11 +144,20 @@ Les noms des variables d'environnement de réglage suivent les champs de
   filtrer partout, y compris avant l'appel au juge. La trace reste dans
   le label d'audit et dans le rapport. La dernière formulation d'une
   entrée n'est jamais retirable.
-- **Pages multiples d'un même document.** `doc.pdf:p12, p14` : une page
-  seule prolonge le dernier document nommé. Le préfixe `p` est
-  obligatoire dans ce cas — sans lui, `14` serait indiscernable d'un nom
-  de document. C'est la seule ambiguïté de la syntaxe, et elle est levée
-  par une règle explicite plutôt que par une heuristique.
+- **Format des sources.** Les pages suivent leur document
+  (`doc.pdf:12 14`) plutôt que d'apparaître comme des fragments séparés.
+  Une page ne se retrouve donc jamais seule, et le préfixe `p` — qui
+  n'était obligatoire que dans ce cas — disparaît : l'écriture est la
+  même qu'il y ait une page ou dix. L'ancienne forme (`doc.pdf:12, 14`)
+  reste acceptée par tolérance, et le module `sources.py` répare les
+  approximations de saisie courantes au lieu de les rejeter. Le
+  formatage canonique (`format_sources`) est l'inverse exact de
+  l'analyse : la liste rappelée sur la carte se recolle telle quelle
+  dans le job.
+- **Intervalles de pages.** `12-14` est développé en 12, 13, 14, avec un
+  plafond de 50 pages : au-delà, c'est une faute de frappe plus
+  probablement qu'une intention, et l'intervalle est signalé plutôt
+  qu'appliqué.
 - **`KILI_CA_BUNDLE`.** Transmis à `Kili(verify=…)`, qui accepte un
   chemin comme `requests`. Un chemin invalide fait **échouer** la
   création du client : retomber sur les certificats du système sans le
