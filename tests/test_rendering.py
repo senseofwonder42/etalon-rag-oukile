@@ -124,6 +124,53 @@ def _headings(document):
     ]
 
 
+def test_a_matched_case_also_shows_the_reference_question():
+    document = render_review_asset(
+        case("DIVERGENCE"),
+        [entry().answers[0]],
+        candidate_question="Quel est le délai de déclaration ?",
+    )
+    headings = _headings(document)
+    assert "Question du référentiel appariée" in headings
+    content = " ".join(n["text"] for n in nodes(document) if "text" in n)
+    assert "Quel est le délai de déclaration ?" in content
+
+
+def test_a_reference_question_identical_to_the_asked_one_is_not_repeated():
+    matched = case("DIVERGENCE")
+    document = render_review_asset(
+        matched,
+        [entry().answers[0]],
+        candidate_question=matched.question,
+    )
+    headings = _headings(document)
+    assert "Question du référentiel appariée" not in headings
+    assert "Formulations déjà validées" in headings
+
+
+def test_the_answer_to_arbitrate_sits_in_the_right_column():
+    document = render_review_asset(case(), [entry().answers[0]])
+    candidate = [
+        n
+        for n in nodes(document)
+        if n.get("backgroundColor") == "#fff3e0"
+    ]
+    validated = [
+        n
+        for n in nodes(document)
+        if n.get("backgroundColor") == "#e8f5e9"
+    ]
+    assert candidate and all(n["margin"] == "0 0 0 35%" for n in candidate)
+    assert validated and all("margin" not in n for n in validated)
+    heading = next(
+        n
+        for n in nodes(document)
+        if n.get("type") == "h2"
+        and n["children"][0]["text"] == "Réponse générée à arbitrer"
+    )
+    assert heading["textAlign"] == "right"
+
+
 def test_the_proposed_question_comes_just_above_the_wordings():
     document = render_review_asset(
         case("APPARIEMENT_INCERTAIN"),

@@ -121,8 +121,10 @@ def create_cases(
             cases (see `compute_external_ids`).
         answers_by_question: Validated wordings, by `question_id`, to
             display next to the candidate answer.
-        candidate_questions: Reference question proposed by the matching,
-            by candidate `question_id`, for uncertain matches.
+        candidate_questions: Question of every reference entry, by
+            `question_id`. The card shows the one the case was matched
+            to — the candidate entry on an uncertain match, the matched
+            entry otherwise.
         max_metadata_size: Metadata fallback threshold, in bytes. The
             import being batched, the fallback is decided here on the
             measured size, without a retry after a server refusal.
@@ -142,7 +144,9 @@ def create_cases(
             answers_by_question.get(
                 case.question_id_candidat or case.question_id, []
             ),
-            candidate_questions.get(case.question_id_candidat or ""),
+            candidate_questions.get(
+                case.question_id_candidat or case.question_id
+            ),
         )
         payload = prepare_payload(
             case.model_dump(), rendering, max_metadata_size

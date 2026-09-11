@@ -87,6 +87,16 @@ def build_probe_asset() -> list[dict]:
             [text_node("Texte aligné à droite.", generator)],
             {"textAlign": "right"},
         ),
+        paragraph(
+            [text_node("Bloc décalé en colonne de droite.", generator)],
+            {
+                "backgroundColor": "#fff3e0",
+                "padding": "4px 8px",
+                "borderRadius": "6px",
+                "maxWidth": "65%",
+                "margin": "0 0 0 35%",
+            },
+        ),
         heading("h3", "Liste à puces"),
         element_node(
             "ul",
@@ -206,7 +216,8 @@ def main() -> None:
     print(
         "Ouvrir l'asset et vérifier, dans l'ordre : niveaux de titre, "
         "marques\n(gras, italique, code, souligné), fonds de couleur, "
-        "alignements,\nlistes, citation, tableau."
+        "alignements, décalage\nen colonne de droite, listes, citation, "
+        "tableau."
     )
 
 

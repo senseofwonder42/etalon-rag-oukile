@@ -85,13 +85,19 @@ parcourir dans l'ordre, la première fois.
     et promotion ne sont pas concurrentes ; si elles le deviennent, il
     faudra passer à des identifiants stables et étendre les catégories du
     job au-delà de cinq.
-13. **Catégories des `json_interface`.** Les catégories sont écrites
+13. **Mise en deux colonnes de la carte de revue.** La réponse à
+    arbitrer est décalée à droite par les styles `margin` et `maxWidth`,
+    son titre par `textAlign`. Si le serveur ignore ces styles, la
+    séparation repose encore sur les couleurs de fond : rien n'est
+    perdu, mais la lecture en colonnes disparaît. À constater sur la
+    sonde avant de compter dessus.
+14. **Catégories des `json_interface`.** Les catégories sont écrites
     `{"CODE": {"name": "Libellé", "children": []}}`, sans clé `id`. Le SDK
     ne valide pas le `json_interface` : il le sérialise et l'envoie.
     Vérifier que les deux projets s'ouvrent et que les jobs s'affichent
     comme attendu ; ajouter un `id` par catégorie si l'interface les
     exige.
-14. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
+15. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
     `anthropic`. Le prompt attend un objet JSON ; une réponse illisible
     est traitée comme « non conforme, confiance nulle », ce qui envoie le
     cas en revue plutôt que de le passer sous silence.
@@ -466,12 +472,15 @@ Projet B — revue prod  : cl…
   (origine, auteur, date), et ses sources en tableau — **une ligne par
   document**, ses pages réunies dans la seconde colonne — suivi de la
   liste prête à copier-coller ;
-- projet B : la question en `h1`, un encadré expliquant le motif de mise
-  en revue, la réponse générée sur fond ambre, les sources en tableau
-  suivies de la liste prête à copier-coller ; sur une question inédite il
-  n'y a pas de section « formulations validées », et sur un appariement
-  incertain la question du référentiel proposée est affichée juste
-  au-dessus des formulations qui s'y rattachent ;
+- projet B : la question posée en `h1`, un encadré expliquant le motif de
+  mise en revue, puis **deux colonnes** — les formulations validées à
+  gauche sur fond vert, la réponse à arbitrer à droite sur fond ambre —
+  et les sources en tableau suivies de la liste prête à copier-coller.
+  La question du référentiel à laquelle le cas a été apparié est
+  rappelée juste au-dessus des formulations qui s'y rattachent, sauf si
+  elle est mot pour mot celle qui a été posée. Sur une question inédite,
+  il n'y a ni question de référence ni section « formulations
+  validées » ;
 - les libellés des jobs, en français, et le fait que `MEME_QUESTION`
   précise qu'il ne concerne que les appariements incertains ;
 - **le verdict du juge n'apparaît nulle part** : il est en metadata.

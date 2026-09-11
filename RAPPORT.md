@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **129 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **132 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -105,6 +105,19 @@ Les noms des variables d'environnement de réglage suivent les champs de
 `KILI_CA_BUNDLE`, `ANTHROPIC_API_KEY` et `JINA_API_KEY` sont inchangées.
 
 ## Choix et hypothèses
+
+- **Carte de revue en deux colonnes.** La réponse à arbitrer est décalée
+  à droite (`margin`, `maxWidth`) et son titre ferré à droite
+  (`textAlign`), les formulations validées restant à gauche. Le texte
+  lui-même n'est **pas** ferré à droite à l'intérieur du bloc : un
+  paragraphe ou une liste ferrés à droite se lisent mal. Si le serveur
+  ignore ces styles, la séparation repose encore sur les couleurs de
+  fond ; c'est ajouté à la sonde et à la liste de vérification.
+- **Question du référentiel sur un appariement certain.** Elle est
+  désormais affichée aussi quand le cas part en `DIVERGENCE`, puisque
+  les formulations montrées lui appartiennent et que la question posée
+  en production est souvent une reformulation. Elle est tue lorsqu'elle
+  est mot pour mot la question posée : la répéter n'apprendrait rien.
 
 - **Normalisation BM25.** Les scores BM25 ne sont pas bornés ; ils sont
   ramenés dans `[0, 1]` en divisant par le score qu'obtient chaque entrée

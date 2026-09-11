@@ -9,6 +9,7 @@ Every displayed string stays in French: this is the business interface.
 """
 
 from .markdown_to_richtext import markdown_to_richtext
+from .normalisation import normalize_question
 from .richtext import IdGenerator, document, element_node, text_node
 from .schemas import Answer, ReferenceEntry, ReviewCase, Source
 from .sources import format_sources, group_by_document
@@ -17,6 +18,25 @@ VALIDATED_BACKGROUND = "#e8f5e9"
 CANDIDATE_BACKGROUND = "#fff3e0"
 HEADER_BACKGROUND = "#eeeeee"
 GREY = "#616161"
+
+#: Les formulations validées tiennent la colonne de gauche, la réponse à
+#: arbitrer celle de droite : la carte se lit comme deux colonnes, ce qui
+#: sépare d'un coup d'œil ce qui fait foi de ce qui est à trancher. Le
+#: texte reste aligné à gauche à l'intérieur de son bloc, bien plus
+#: lisible qu'un texte ferré à droite.
+VALIDATED_STYLES = {
+    "backgroundColor": VALIDATED_BACKGROUND,
+    "padding": "4px 8px",
+    "borderRadius": "6px",
+    "maxWidth": "65%",
+}
+CANDIDATE_STYLES = {
+    "backgroundColor": CANDIDATE_BACKGROUND,
+    "padding": "4px 8px",
+    "borderRadius": "6px",
+    "maxWidth": "65%",
+    "margin": "0 0 0 35%",
+}
 
 REASON_LABELS = {
     "NOUVELLE_QUESTION": (
@@ -181,14 +201,14 @@ def answer_label(marker: str) -> str:
 
 
 def _answer_block(
-    answer: Answer, generator: IdGenerator, background: str
+    answer: Answer, generator: IdGenerator, styles: dict[str, str]
 ) -> list[dict]:
     """Render a validated wording, headed by its number.
 
     Args:
         answer: Validated wording.
         generator: Id generator of the document.
-        background: Background colour of the answer text.
+        styles: CSS styles applied to the wording itself.
 
     Returns:
         The block nodes of the answer.
@@ -196,8 +216,7 @@ def _answer_block(
     blocks = [_heading("h3", answer_label(answer.id), generator)]
     blocks.extend(
         _apply_styles(
-            markdown_to_richtext(answer.text, generator),
-            {"backgroundColor": background, "padding": "4px 8px"},
+            markdown_to_richtext(answer.text, generator), styles
         )
     )
     provenance = (
@@ -240,7 +259,9 @@ def render_reference_asset(entry: ReferenceEntry) -> list[dict]:
             )
         )
     for answer in entry.answers:
-        blocks.extend(_answer_block(answer, generator, VALIDATED_BACKGROUND))
+        blocks.extend(
+            _answer_block(answer, generator, VALIDATED_STYLES)
+        )
 
     blocks.append(_heading("h2", "Sources", generator))
     blocks.extend(_sources_table(entry.sources, generator))
@@ -257,15 +278,20 @@ def render_review_asset(
     The LLM-as-judge verdict is **never** rendered: showing it would
     anchor the annotator on the very opinion the review audits.
 
-    On an uncertain match the proposed reference question is shown right
-    above the wordings, since those wordings belong to it. On a brand new
+    The reference question is shown right above the wordings, since those
+    wordings belong to it — whether the match was certain or not, unless
+    it is word for word the question that was asked. On a brand new
     question the whole wordings section disappears.
+
+    The validated wordings sit in the left column and the answer to
+    arbitrate in the right one, so that what stands as truth and what is
+    up for judgement never blur together.
 
     Args:
         case: Review case to render.
         validated_answers: Wordings already validated for this question.
-        candidate_question: Reference question proposed by the matching,
-            to display when the reason is `APPARIEMENT_INCERTAIN`.
+        candidate_question: Question of the matched reference entry, when
+            there is one.
 
     Returns:
         The `json_content` of the asset.
@@ -286,9 +312,24 @@ def render_review_asset(
         )
     )
 
-    if case.motif == "APPARIEMENT_INCERTAIN" and candidate_question:
+    incertain = case.motif == "APPARIEMENT_INCERTAIN"
+    # Sur un appariement certain, la question du référentiel n'est
+    # rappelée que si elle diffère de celle qui a été posée : la répéter
+    # à l'identique n'apprendrait rien.
+    montrer_question = bool(candidate_question) and (
+        incertain
+        or normalize_question(candidate_question or "")
+        != normalize_question(case.question)
+    )
+    if montrer_question:
         blocks.append(
-            _heading("h2", "Question du référentiel proposée", generator)
+            _heading(
+                "h2",
+                "Question du référentiel proposée"
+                if incertain
+                else "Question du référentiel appariée",
+                generator,
+            )
         )
         blocks.append(
             _paragraph(
@@ -308,21 +349,28 @@ def render_review_asset(
             _heading(
                 "h2",
                 "Formulations validées pour cette question"
-                if candidate_question
+                if montrer_question
                 else "Formulations déjà validées",
                 generator,
             )
         )
         for answer in validated_answers:
             blocks.extend(
-                _answer_block(answer, generator, VALIDATED_BACKGROUND)
+                _answer_block(answer, generator, VALIDATED_STYLES)
             )
 
-    blocks.append(_heading("h2", "Réponse générée à arbitrer", generator))
+    blocks.append(
+        element_node(
+            "h2",
+            [text_node("Réponse générée à arbitrer", generator)],
+            generator,
+            {"textAlign": "right"},
+        )
+    )
     blocks.extend(
         _apply_styles(
             markdown_to_richtext(case.candidate_answer, generator),
-            {"backgroundColor": CANDIDATE_BACKGROUND, "padding": "4px 8px"},
+            CANDIDATE_STYLES,
         )
     )
 
