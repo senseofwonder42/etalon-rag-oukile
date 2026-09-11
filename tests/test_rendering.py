@@ -206,8 +206,19 @@ def test_right_column_headings_sit_inside_the_right_column():
         if n.get("type") == "h2"
     }
     for title in ("Réponse générée à arbitrer", "Sources citées"):
-        assert headings[title]["margin"] == "0 0 0 35%"
+        top, _, bottom, left = headings[title]["margin"].split()
+        assert left == "35%"
+        # Un espace sépare le titre du contenu qu'il annonce.
+        assert bottom != "0"
     assert "margin" not in headings["Formulations déjà validées"]
+
+
+def test_both_cards_use_a_slightly_smaller_font():
+    for document in (
+        render_reference_asset(entry()),
+        render_review_asset(case(), [entry().answers[0]]),
+    ):
+        assert document[0]["fontSize"] == "0.9em"
 
 
 def test_a_long_url_is_shrunk_and_allowed_to_wrap():

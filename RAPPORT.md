@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **151 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **153 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -131,13 +131,23 @@ Les noms des variables d'environnement de réglage suivent les champs de
   fausse suppression et produisait une autre URL. Le modèle `Source`
   recompose désormais tout nom de document (NFC), ce qui couvre d'un
   coup le JSONL de production, la metadata relue et la saisie des
-  annotateurs. Découvert en intégrant les vrais noms de pièces MRH, dont
-  `DCON_ConditionGénérales_MRH_202605.pdf`.
+  annotateurs. Découvert en intégrant les noms de pièces MRH, dont une
+  première version comportait par erreur un accent ; les noms réels
+  n'en ont pas, mais la protection est conservée pour les documents qui
+  en auraient.
 - **URL longues.** Police réduite et césure autorisée n'importe où dans
   la cellule, plutôt qu'un libellé court de type « Ouvrir » : tant qu'on
   ne sait pas si l'URL est cliquable, masquer l'adresse priverait
   l'annotateur du seul moyen de la copier. Si la sonde montre que les
   liens sont cliquables, un libellé court deviendra la meilleure option.
+- **Police et espacements.** La police de base des cartes est réduite
+  à la racine du document (`fontSize: 0.9em`) plutôt que sur chaque
+  bloc : l'héritage CSS l'étend à tout le contenu, et les tailles
+  relatives déjà en place (titres, URL en `0.75em`) suivent. Les titres
+  de la colonne de droite recevaient une marge verticale nulle, héritée
+  du raccourci `margin: 0 0 0 35%` qui sert à décaler la colonne : c'est
+  ce qui les collait à leur contenu. Ils ont maintenant leur propre
+  marge, avec un espace au-dessus et en dessous.
 - **Carte de revue en deux colonnes.** La réponse à arbitrer est décalée
   à droite (`margin`, `maxWidth`)
   avec les sources qu'elle cite — elles décrivent la même prédiction — et

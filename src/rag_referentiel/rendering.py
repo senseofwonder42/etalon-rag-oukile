@@ -31,9 +31,17 @@ BLOCK_STYLES = {
     "borderRadius": "6px",
     "maxWidth": "65%",
 }
+#: Police de base des cartes, un peu réduite : les textes d'assurance
+#: sont longs, et une police plus petite rend la carte plus compacte. Elle
+#: s'applique à la racine du document et se transmet à tout son contenu.
+CARD_STYLES = {"fontSize": "0.9em"}
 #: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
 #: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
 RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
+#: Même décalage pour les titres de la colonne de droite, avec un espace
+#: au-dessus et en dessous. Le raccourci `margin` de `RIGHT_COLUMN` met
+#: les marges verticales à zéro, ce qui collait le titre à son contenu.
+RIGHT_COLUMN_HEADING = {"maxWidth": "65%", "margin": "16px 0 8px 35%"}
 #: Une URL est une longue chaîne sans espace : sans césure elle impose sa
 #: largeur à toute la colonne. On la réduit et on l'autorise à se couper
 #: n'importe où, pour qu'elle se replie dans sa cellule.
@@ -334,7 +342,7 @@ def render_reference_asset(
             entry.sources, generator, url_template=url_template
         )
     )
-    return document(blocks)
+    return document(blocks, CARD_STYLES)
 
 
 def render_review_asset(
@@ -419,7 +427,10 @@ def render_review_asset(
 
     blocks.append(
         _heading(
-            "h2", "Réponse générée à arbitrer", generator, RIGHT_COLUMN
+            "h2",
+            "Réponse générée à arbitrer",
+            generator,
+            RIGHT_COLUMN_HEADING,
         )
     )
     blocks.extend(
@@ -430,11 +441,11 @@ def render_review_asset(
     )
 
     blocks.append(
-        _heading("h2", "Sources citées", generator, RIGHT_COLUMN)
+        _heading("h2", "Sources citées", generator, RIGHT_COLUMN_HEADING)
     )
     blocks.extend(
         _sources_table(
             case.sources, generator, RIGHT_COLUMN, url_template
         )
     )
-    return document(blocks)
+    return document(blocks, CARD_STYLES)

@@ -93,19 +93,24 @@ parcourir dans l'ordre, la première fois.
     « Lien » est plus petite et se replie dans sa cellule : `fontSize`
     et `wordBreak` ne figurent pas nommément dans la liste des styles
     documentés. Voir « Consulter le document source ».
-14. **Mise en deux colonnes de la carte de revue.** La réponse à
+14. **Police et espacements des cartes.** La police de base est réduite
+    par un `fontSize` posé sur la racine du document, qui compte sur
+    l'héritage CSS pour atteindre tout le contenu. Vérifier sur la sonde
+    que l'ensemble est bien plus petit, et que les titres de la colonne
+    de droite sont séparés de leur contenu.
+15. **Mise en deux colonnes de la carte de revue.** La réponse à
     arbitrer est décalée à droite par les styles `margin` et `maxWidth`,
     son titre par `textAlign`. Si le serveur ignore ces styles, la
     séparation repose encore sur les couleurs de fond : rien n'est
     perdu, mais la lecture en colonnes disparaît. À constater sur la
     sonde avant de compter dessus.
-15. **Catégories des `json_interface`.** Les catégories sont écrites
+16. **Catégories des `json_interface`.** Les catégories sont écrites
     `{"CODE": {"name": "Libellé", "children": []}}`, sans clé `id`. Le SDK
     ne valide pas le `json_interface` : il le sérialise et l'envoie.
     Vérifier que les deux projets s'ouvrent et que les jobs s'affichent
     comme attendu ; ajouter un `id` par catégorie si l'interface les
     exige.
-16. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
+17. **Modèle du juge.** `claude-sonnet-5` par défaut, via le SDK
     `anthropic`. Le prompt attend un objet JSON ; une réponse illisible
     est traitée comme « non conforme, confiance nulle », ce qui envoie le
     cas en revue plutôt que de le passer sous silence.
@@ -489,7 +494,9 @@ Projet B — revue prod  : cl…
   prédiction : la réponse à arbitrer sur fond ambre, puis les sources
   qu'elle cite, en tableau et en liste prête à copier-coller. Les titres
   « Réponse générée à arbitrer » et « Sources citées » sont placés dans
-  la colonne de droite, alignés sur son bord gauche.
+  la colonne de droite, alignés sur son bord gauche, et séparés par un
+  petit espace du contenu qu'ils annoncent. Les deux cartes utilisent une
+  police légèrement réduite.
   La question du référentiel à laquelle le cas a été apparié est
   toujours rappelée juste au-dessus des formulations qui s'y rattachent,
   même lorsqu'elle est mot pour mot celle qui a été posée. Sur une
@@ -561,6 +568,53 @@ Les seuils, plafonds et modèles sont surchargeables de la même façon
 
 ---
 
+## Consulter le document source
+
+`DOCUMENT_URL_TEMPLATE` associe un `doc_id` à son adresse — un SharePoint,
+une GED, un serveur de fichiers :
+
+```
+DOCUMENT_URL_TEMPLATE=https://contoso.sharepoint.com/sites/assurance/Documents/{doc_id}#page={page}
+```
+
+Le `doc_id` est encodé pour l'URL, et l'ancre est retirée quand la page
+est inconnue. Deux effets, dès que le gabarit est renseigné :
+
+- une colonne **« Lien »** s'ajoute au tableau des sources de chaque
+  carte, avec l'adresse de chaque document ;
+- la clé **`url`** du `json_metadata` est remplie — c'est la seule
+  affordance de lien **documentée** par le SDK Kili (« metadata visible
+  on the asset with the following keys: `imageUrl`, `text`, `url` »).
+  Elle ne porte qu'une adresse : elle n'est donc renseignée que lorsque
+  l'asset cite un seul document, en choisir un parmi plusieurs étant
+  arbitraire.
+
+L'URL est une longue chaîne sans espace qui, sans précaution, imposerait
+sa largeur à toute la colonne. Elle est donc affichée en **police
+réduite** (`fontSize: 0.75em`) et **autorisée à se couper n'importe où**
+(`wordBreak: break-all`) : elle se replie dans sa cellule au lieu
+d'élargir le tableau.
+
+Un nom de document accentué apparaît dans l'URL sous forme codée — `é`
+devient `%C3%A9`. C'est le codage normal d'un caractère non ASCII dans
+une URL, pas une corruption : le navigateur le décode et SharePoint
+l'accepte. Les noms de pièces réels n'ont pas d'accent, ce qui garde
+des URL lisibles.
+
+Pour l'essayer sur la démonstration, renseigner le gabarit dans `.env`
+puis lancer `demo.py --create` : les questions d'assurance habitation
+citent les pièces MRH réelles — `DCON_ConditionGenerales_MRH_202605.pdf`,
+`DCON_CommentSouscrire_MRH_202605.pdf`, `DCON_DIPA_MRH_202605.pdf`.
+
+**Réserve importante.** Le format rich text documenté n'a **aucun nœud
+lien** : ni `a`, ni attribut `href`. Rien ne garantit donc qu'une URL
+affichée dans le tableau soit cliquable — elle peut n'être que du texte
+à copier. `probe_richtext.py` importe trois écritures d'une même URL
+(brute, en `code`, soulignée et colorée) plus la clé `url` de metadata :
+le premier run tranche en cinq minutes. Si rien n'est cliquable dans la
+carte, la clé `url` reste le point d'entrée, et la colonne « Lien » sert
+au copier-coller.
+
 ## Revérification documentaire
 
 Les documents bougent souvent de façon mineure : **aucune invalidation
@@ -609,7 +663,7 @@ comme un arbitrage humain.
 ## Développement
 
 ```bash
-uv run pytest          # 126 tests, entièrement hors ligne
+uv run pytest          # 153 tests, entièrement hors ligne
 uv run ruff check .
 ```
 

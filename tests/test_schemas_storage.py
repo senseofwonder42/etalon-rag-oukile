@@ -61,7 +61,7 @@ def test_source_without_a_page():
 def test_a_decomposed_accent_in_a_document_name_is_recomposed():
     import unicodedata
 
-    composed = "DCON_ConditionGénérales_MRH_202605.pdf"
+    composed = "Avenant_Résiliation_2026.pdf"
     decomposed = unicodedata.normalize("NFD", composed)
     assert decomposed != composed
     assert Source(doc_id=decomposed).doc_id == composed

@@ -169,7 +169,7 @@ def test_the_url_metadata_key_needs_a_single_document():
 
 def test_a_real_document_name_round_trips():
     typed = (
-        "DCON_ConditionGénérales_MRH_202605.pdf:22 23 24, "
+        "DCON_ConditionGenerales_MRH_202605.pdf:22 23 24, "
         "DCON_DIPA_MRH_202605.pdf:1"
     )
     parsed, unreadable = parse_sources(typed)
@@ -177,6 +177,14 @@ def test_a_real_document_name_round_trips():
     assert format_sources(parsed) == typed
 
 
-def test_an_accented_document_name_is_encoded_in_its_url():
-    url = document_url(TEMPLATE, "DCON_ConditionGénérales_MRH_202605.pdf", 5)
-    assert "ConditionG%C3%A9n%C3%A9rales" in url
+def test_an_unaccented_document_name_is_left_as_is_in_its_url():
+    url = document_url(TEMPLATE, "DCON_ConditionGenerales_MRH_202605.pdf", 5)
+    assert url == "https://sp.exemple.fr/docs/DCON_ConditionGenerales_MRH_202605.pdf#page=5"
+    assert "%" not in url
+
+
+def test_an_accented_document_name_is_percent_encoded():
+    # C'est le codage normal d'un « é » dans une URL, pas une corruption :
+    # le navigateur le décode, SharePoint l'accepte.
+    url = document_url(TEMPLATE, "Avenant_Résiliation_2026.pdf", 1)
+    assert "R%C3%A9siliation" in url

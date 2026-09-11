@@ -13,7 +13,11 @@ from loguru import logger
 
 from rag_referentiel.client import create_client
 from rag_referentiel.interfaces import REFERENCE_INTERFACE
-from rag_referentiel.rendering import LINK_TEXT_STYLES, RIGHT_COLUMN
+from rag_referentiel.rendering import (
+    CARD_STYLES,
+    LINK_TEXT_STYLES,
+    RIGHT_COLUMN_HEADING,
+)
 from rag_referentiel.richtext import (
     IdGenerator,
     document,
@@ -22,11 +26,11 @@ from rag_referentiel.richtext import (
 )
 
 EXTERNAL_ID = "sonde_richtext"
-#: Une URL SharePoint réaliste, longue et accentuée, pour éprouver la
-#: largeur de la colonne « Lien ».
+#: Une URL SharePoint réaliste et longue, pour éprouver la largeur de la
+#: colonne « Lien ».
 LONG_URL = (
     "https://contoso.sharepoint.com/sites/assurance/Documents/"
-    "DCON_ConditionG%C3%A9n%C3%A9rales_MRH_202605.pdf#page=22"
+    "DCON_ConditionGenerales_MRH_202605.pdf#page=22"
 )
 
 
@@ -48,7 +52,7 @@ def build_probe_asset() -> list[dict]:
             "h3",
             [text_node("Titre dans la colonne de droite", generator)],
             generator,
-            RIGHT_COLUMN,
+            RIGHT_COLUMN_HEADING,
         )
 
     def heading(level: str, text: str) -> dict:
@@ -219,7 +223,7 @@ def build_probe_asset() -> list[dict]:
                         element_node(
                             "tr",
                             [
-                                cell("DCON_ConditionGénérales_MRH_202605.pdf"),
+                                cell("DCON_ConditionGenerales_MRH_202605.pdf"),
                                 cell("22, 23, 24"),
                                 cell(LONG_URL, text_styles=LINK_TEXT_STYLES),
                             ],
@@ -241,7 +245,9 @@ def build_probe_asset() -> list[dict]:
             generator,
         ),
     ]
-    return document(blocks, {"maxWidth": "900px", "margin": "0 auto"})
+    return document(
+        blocks, {**CARD_STYLES, "maxWidth": "900px", "margin": "0 auto"}
+    )
 
 
 def main() -> None:
@@ -289,7 +295,8 @@ def main() -> None:
         "Dans le tableau : l'URL de la colonne « Lien » est-elle plus\n"
         "petite, et se replie-t-elle dans sa cellule au lieu d'élargir\n"
         "la colonne ? Le « Titre dans la colonne de droite » est-il bien\n"
-        "décalé ?\n\n"
+        "décalé, et séparé du bloc qui le suit ? La police de l'ensemble\n"
+        "est-elle légèrement réduite ?\n\n"
         "Puis la question des liens : l'une des trois URL du paragraphe\n"
         "« Lien » est-elle cliquable ? Et la clé « url » de la metadata\n"
         "apparaît-elle à côté de l'asset, cliquable ?"
