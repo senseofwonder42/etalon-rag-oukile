@@ -590,6 +590,10 @@ def _promotion_target(arbitrated: ArbitratedCase) -> str | None:
 def _text_to_promote(arbitrated: ArbitratedCase) -> tuple[str | None, Origin]:
     """Determine the wording to push into the repository.
 
+    A wrong answer never enters the repository, but the wording the
+    business team writes to replace it does — under the `metier` origin,
+    since it owes nothing to what the RAG produced.
+
     Args:
         arbitrated: Review case and its arbitration.
 
@@ -597,15 +601,20 @@ def _text_to_promote(arbitrated: ArbitratedCase) -> tuple[str | None, Origin]:
         The pair (text to push or `None`, origin to record).
     """
     label = arbitrated.label
-    if label.candidate_correct == "OUI":
+    verdict = label.candidate_correct
+    if verdict == "OUI":
         return arbitrated.case.candidate_answer, "rag_valide"
-    if label.candidate_correct == "PRESQUE":
+    if verdict in {"PRESQUE", "NON"}:
         if label.corrected_version:
-            return label.corrected_version, "rag_corrige"
-        logger.warning(
-            "Cas {} arbitré « PRESQUE » sans version corrigée : rien n'est "
+            origin: Origin = (
+                "rag_corrige" if verdict == "PRESQUE" else "metier"
+            )
+            return label.corrected_version, origin
+        logger.info(
+            "Cas {} arbitré « {} » sans version corrigée : rien n'est "
             "versé au référentiel.",
             arbitrated.external_id,
+            verdict,
         )
     return None, "rag_valide"
 

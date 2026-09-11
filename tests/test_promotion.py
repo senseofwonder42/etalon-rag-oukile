@@ -176,6 +176,68 @@ def test_verdict_no_writes_nothing(kili, settings, projects):
     assert kili.metadata(review_id, external_id)["statut_revue"] == "REJETE"
 
 
+def test_verdict_no_with_a_correction_promotes_the_business_wording(
+    kili, settings, projects
+):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili, review_id, settings, question_id=question_id
+    )
+    kili.add_label(
+        review_id,
+        external_id,
+        {
+            "CANDIDATE_CORRECTE": {"categories": [{"name": "NON"}]},
+            "VERSION_CORRIGEE": {
+                "text": "Le délai court à compter de la connaissance du "
+                "sinistre, pas de sa survenance."
+            },
+            "SOURCES_PERTINENTES": {"categories": [{"name": "OUI"}]},
+        },
+        author="m.leroy@exemple.fr",
+    )
+
+    report = promote_batch(kili, reference_id, review_id, settings)
+
+    entry = load_entries(kili, reference_id)[0]
+    assert report.promoted == 1
+    assert report.variants_added == 1
+    assert len(entry.answers) == 2
+    # La réponse générée était fausse : ce qui entre est la formulation
+    # du métier, donc d'origine « metier ».
+    assert entry.answers[1].origine == "metier"
+    assert entry.answers[1].text.startswith("Le délai court")
+    assert entry.answers[1].auteur == "m.leroy@exemple.fr"
+    assert kili.metadata(review_id, external_id)["statut_revue"] == "PROMU"
+
+
+def test_the_wrong_candidate_answer_never_enters_the_repository(
+    kili, settings, projects
+):
+    reference_id, review_id, question_id = projects
+    external_id = submit_case(
+        kili,
+        review_id,
+        settings,
+        question_id=question_id,
+        candidate_answer="Vous avez trente jours ouvrés.",
+    )
+    kili.add_label(
+        review_id,
+        external_id,
+        {
+            "CANDIDATE_CORRECTE": {"categories": [{"name": "NON"}]},
+            "VERSION_CORRIGEE": {"text": "Le délai est de cinq jours."},
+            "SOURCES_PERTINENTES": {"categories": [{"name": "OUI"}]},
+        },
+    )
+
+    promote_batch(kili, reference_id, review_id, settings)
+
+    texts = [a.text for a in load_entries(kili, reference_id)[0].answers]
+    assert "Vous avez trente jours ouvrés." not in texts
+
+
 def test_same_question_no_creates_a_new_entry(kili, settings, projects):
     reference_id, review_id, _ = projects
     external_id = submit_case(

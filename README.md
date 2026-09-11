@@ -180,6 +180,8 @@ Les schémas pydantic de `schemas.py` sont sérialisés dans le
   le label ; ce n'est pas la clé d'API qui écrit dans A.
 - `derniere_promotion` est le **filigrane** de la campagne du projet A :
   horodatage du dernier label déjà consommé par `promote.py`.
+- Une réponse générée jugée fausse **n'entre jamais** dans `answers[]` ;
+  seule y entre la formulation que le métier écrit à sa place.
 - Il n'existe **aucune notion de contre-exemple** : un verdict `NON` est
   compté au rapport et n'écrit rien.
 
@@ -285,7 +287,7 @@ job à cases à cocher.
 | --- | --- | --- | --- |
 | `MEME_QUESTION` | radio `OUI` / `NON` | non | uniquement si `motif = APPARIEMENT_INCERTAIN` ; l'instruction le dit |
 | `CANDIDATE_CORRECTE` | radio `OUI` / `PRESQUE` / `NON` | oui | verdict métier sur la réponse générée |
-| `VERSION_CORRIGEE` | transcription | non | la bonne formulation quand `PRESQUE` |
+| `VERSION_CORRIGEE` | transcription | non | la bonne formulation, quand la réponse est `PRESQUE` **ou** `NON` |
 | `SOURCES_PERTINENTES` | radio `OUI` / `PARTIEL` / `NON` | oui | les sources citées soutiennent-elles la réponse ? |
 | `SOURCES_CORRIGEES` | transcription | non | liste corrigée, même format |
 
@@ -295,8 +297,8 @@ Ce que `promote.py` en fait :
 | --- | --- |
 | `CANDIDATE_CORRECTE = OUI` | la réponse candidate rejoint `answers[]`, `origine = rag_valide` |
 | `PRESQUE` **et** `VERSION_CORRIGEE` renseignée | c'est le texte corrigé qui rejoint `answers[]`, `origine = rag_corrige` |
-| `PRESQUE` sans `VERSION_CORRIGEE` | rien n'est écrit, le cas passe en `REJETE` |
-| `NON` | rien n'est écrit, seulement compté au rapport |
+| `NON` **et** `VERSION_CORRIGEE` renseignée | la formulation du métier rejoint `answers[]`, `origine = metier` — elle ne doit rien à ce qu'a produit la RAG |
+| `PRESQUE` ou `NON` sans `VERSION_CORRIGEE` | rien n'est écrit, le cas passe en `REJETE` |
 | `MEME_QUESTION = NON` sur un cas incertain | **nouvelle** entrée créée dans A |
 | `MEME_QUESTION` non rempli sur un cas incertain | le cas reste `EN_ATTENTE`, rien n'est décidé à sa place |
 | `SOURCES_CORRIGEES` renseignée | remplace `sources[]` (les `doc_version` connues sont reportées) ; les sources retirées sont listées au rapport |
@@ -474,8 +476,9 @@ Projet B — revue prod  : cl…
   liste prête à copier-coller ;
 - projet B : la question posée en `h1`, un encadré expliquant le motif de
   mise en revue, puis **deux colonnes** — les formulations validées à
-  gauche sur fond vert, la réponse à arbitrer à droite sur fond ambre —
-  et les sources en tableau suivies de la liste prête à copier-coller.
+  gauche sur fond vert ; à droite, tout ce qui décrit la prédiction : la
+  réponse à arbitrer sur fond ambre, puis les sources qu'elle cite, en
+  tableau et en liste prête à copier-coller.
   La question du référentiel à laquelle le cas a été apparié est
   toujours rappelée juste au-dessus des formulations qui s'y rattachent,
   même lorsqu'elle est mot pour mot celle qui a été posée. Sur une

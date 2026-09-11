@@ -167,8 +167,9 @@ REVIEW_INTERFACE: dict = {
         ),
         "VERSION_CORRIGEE": _transcription_job(
             instruction=(
-                "Si « Presque » : écrire ici la bonne formulation de la "
-                "réponse."
+                "Si la réponse générée est « Presque » ou « Non » : écrire "
+                "ici la bonne formulation. Elle rejoindra le référentiel à "
+                "la place de la réponse générée."
             ),
             required=False,
         ),

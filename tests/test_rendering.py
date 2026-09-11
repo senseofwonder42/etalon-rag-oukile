@@ -171,6 +171,25 @@ def test_the_answer_to_arbitrate_sits_in_the_right_column():
     assert heading["textAlign"] == "right"
 
 
+def test_the_cited_sources_sit_in_the_right_column():
+    document = render_review_asset(case(), [entry().answers[0]])
+    table = next(n for n in nodes(document) if n.get("type") == "table")
+    assert table["margin"] == "0 0 0 35%"
+    heading = next(
+        n
+        for n in nodes(document)
+        if n.get("type") == "h2"
+        and n["children"][0]["text"] == "Sources citées"
+    )
+    assert heading["textAlign"] == "right"
+
+
+def test_the_reference_card_keeps_its_sources_full_width():
+    document = render_reference_asset(entry())
+    table = next(n for n in nodes(document) if n.get("type") == "table")
+    assert "margin" not in table
+
+
 def test_the_proposed_question_comes_just_above_the_wordings():
     document = render_review_asset(
         case("APPARIEMENT_INCERTAIN"),

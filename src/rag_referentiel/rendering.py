@@ -23,6 +23,9 @@ GREY = "#616161"
 #: sépare d'un coup d'œil ce qui fait foi de ce qui est à trancher. Le
 #: texte reste aligné à gauche à l'intérieur de son bloc, bien plus
 #: lisible qu'un texte ferré à droite.
+#: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
+#: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
+RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
 VALIDATED_STYLES = {
     "backgroundColor": VALIDATED_BACKGROUND,
     "padding": "4px 8px",
@@ -33,8 +36,7 @@ CANDIDATE_STYLES = {
     "backgroundColor": CANDIDATE_BACKGROUND,
     "padding": "4px 8px",
     "borderRadius": "6px",
-    "maxWidth": "65%",
-    "margin": "0 0 0 35%",
+    **RIGHT_COLUMN,
 }
 
 REASON_LABELS = {
@@ -106,7 +108,9 @@ def _heading(level: str, text: str, generator: IdGenerator) -> dict:
 
 
 def _sources_table(
-    sources: list[Source], generator: IdGenerator
+    sources: list[Source],
+    generator: IdGenerator,
+    styles: dict[str, str] | None = None,
 ) -> list[dict]:
     """Render sources as a `doc_id` / `pages` table.
 
@@ -116,17 +120,24 @@ def _sources_table(
     Args:
         sources: Sources to display.
         generator: Id generator of the document.
+        styles: CSS styles applied to every produced block, to place the
+            whole section in a column.
 
     Returns:
         The table followed by the copy-paste line, or a paragraph when
         there is no source.
     """
     if not sources:
-        return [
-            _paragraph(
-                "Aucune source citée.", generator, styles={"color": GREY}
-            )
-        ]
+        return _apply_styles(
+            [
+                _paragraph(
+                    "Aucune source citée.",
+                    generator,
+                    styles={"color": GREY},
+                )
+            ],
+            styles or {},
+        )
 
     def cell(text: str, header: bool) -> dict:
         return element_node(
@@ -161,23 +172,27 @@ def _sources_table(
         for doc_id, pages in group_by_document(sources)
     ]
     body = element_node("tbody", rows, generator)
-    return [
-        element_node("table", [head, body], generator),
-        _paragraph(
-            "À copier-coller dans « Sources corrigées », puis à modifier :",
-            generator,
-            styles={"color": GREY},
-        ),
-        _paragraph(
-            format_sources(sources),
-            generator,
-            marks={"code"},
-            styles={
-                "backgroundColor": HEADER_BACKGROUND,
-                "padding": "4px 8px",
-            },
-        ),
-    ]
+    return _apply_styles(
+        [
+            element_node("table", [head, body], generator),
+            _paragraph(
+                "À copier-coller dans « Sources corrigées », puis à "
+                "modifier :",
+                generator,
+                styles={"color": GREY},
+            ),
+            _paragraph(
+                format_sources(sources),
+                generator,
+                marks={"code"},
+                styles={
+                    "backgroundColor": HEADER_BACKGROUND,
+                    "padding": "4px 8px",
+                },
+            ),
+        ],
+        styles or {},
+    )
 
 
 def answer_label(marker: str) -> str:
@@ -282,9 +297,10 @@ def render_review_asset(
     even when it is word for word the question that was asked. On a brand
     new question the whole wordings section disappears.
 
-    The validated wordings sit in the left column and the answer to
-    arbitrate in the right one, so that what stands as truth and what is
-    up for judgement never blur together.
+    The validated wordings sit in the left column; the answer to
+    arbitrate and the sources it cites sit in the right one — both
+    describe the prediction — so that what stands as truth and what is up
+    for judgement never blur together.
 
     Args:
         case: Review case to render.
@@ -365,6 +381,13 @@ def render_review_asset(
         )
     )
 
-    blocks.append(_heading("h2", "Sources citées", generator))
-    blocks.extend(_sources_table(case.sources, generator))
+    blocks.append(
+        element_node(
+            "h2",
+            [text_node("Sources citées", generator)],
+            generator,
+            {"textAlign": "right"},
+        )
+    )
+    blocks.extend(_sources_table(case.sources, generator, RIGHT_COLUMN))
     return document(blocks)

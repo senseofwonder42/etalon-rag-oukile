@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **132 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **136 tests**, tous verts, **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -106,9 +106,19 @@ Les noms des variables d'environnement de réglage suivent les champs de
 
 ## Choix et hypothèses
 
+- **Version corrigée sur un verdict « Non ».** Le champ était présenté
+  comme réservé au « Presque ». Il vaut aussi quand la réponse est
+  fausse : on attend alors la bonne formulation, et elle rejoint le
+  référentiel sous l'origine `metier` — elle ne doit rien à ce qu'a
+  produit la RAG. La règle du cahier des charges est préservée : c'est la
+  **réponse générée** qui n'entre jamais dans le référentiel sur un
+  « Non », pas la correction écrite par le métier. Sans cela, le champ
+  serait un piège : l'annotateur saisirait une réponse qui n'irait nulle
+  part.
 - **Carte de revue en deux colonnes.** La réponse à arbitrer est décalée
   à droite (`margin`, `maxWidth`) et son titre ferré à droite
-  (`textAlign`), les formulations validées restant à gauche. Le texte
+  (`textAlign`), avec les sources qu'elle cite — elles décrivent la même
+  prédiction — et les formulations validées restant à gauche. Le texte
   lui-même n'est **pas** ferré à droite à l'intérieur du bloc : un
   paragraphe ou une liste ferrés à droite se lisent mal. Si le serveur
   ignore ces styles, la séparation repose encore sur les couleurs de
