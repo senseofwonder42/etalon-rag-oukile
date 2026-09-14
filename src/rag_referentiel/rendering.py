@@ -31,14 +31,6 @@ BLOCK_STYLES = {
     "borderRadius": "6px",
     "maxWidth": "65%",
 }
-#: Police de base des cartes, un peu réduite : les textes d'assurance
-#: sont longs, et une police plus petite rend la carte plus compacte.
-#: Constaté à l'écran : posée à la racine, cette taille n'a aucun effet
-#: visible (0.5em et 0.9em rendent pareil), et le réglage de police de
-#: l'interface Kili ne touche pas les titres. La section « Taille de
-#: police » de `probe_richtext.py` dit à quel niveau de nœud `fontSize`
-#: est respecté ; ce réglage est à déplacer là une fois la sonde lue.
-CARD_STYLES = {"fontSize": "0.9em"}
 #: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
 #: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
 RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
@@ -47,12 +39,29 @@ RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
 #: les marges verticales à zéro, ce qui collait le titre à son contenu.
 RIGHT_COLUMN_HEADING = {"maxWidth": "65%", "margin": "16px 0 8px 35%"}
 #: Une URL est une longue chaîne sans espace : sans césure elle impose sa
-#: largeur à toute la colonne. On la réduit et on l'autorise à se couper
-#: n'importe où, pour qu'elle se replie dans sa cellule.
+#: largeur à toute la colonne. On l'autorise à se couper n'importe où,
+#: pour qu'elle se replie dans sa cellule.
 LINK_TEXT_STYLES = {
-    "fontSize": "0.75em",
     "wordBreak": "break-all",
     "overflowWrap": "anywhere",
+}
+#: Tableau des sources : toute la largeur de sa colonne, des bordures, un
+#: en-tête teinté et une ligne sur deux grisée. Aucune taille de police
+#: n'y figure : Kili ignore `fontSize`, seuls les niveaux de titre
+#: changent la taille du texte.
+TABLE_CELL_STYLES = {"border": "1px solid #d9d9d9", "padding": "6px 10px"}
+TABLE_HEADER_BACKGROUND = "#e3e8ec"
+TABLE_STRIPE_BACKGROUND = "#fafafa"
+#: Largeur relative et largeur minimale de chaque colonne. `width`
+#: répartit la place ; `minWidth`, avec `whiteSpace: nowrap` sur
+#: l'en-tête, empêche un en-tête de se couper sur deux lignes sur un écran
+#: étroit — le tableau déborde alors plutôt que de se tasser. Ces deux
+#: styles ne figurent pas dans la liste documentée : la sonde dit s'ils
+#: sont respectés. Ignorés, ils ne cassent rien.
+TABLE_COLUMNS = {
+    "Document": {"width": "40%", "minWidth": "160px"},
+    "Pages": {"width": "15%", "minWidth": "70px", "textAlign": "center"},
+    "Lien": {"width": "45%", "minWidth": "160px"},
 }
 QUESTION_STYLES = {
     "backgroundColor": HEADER_BACKGROUND,
@@ -144,7 +153,7 @@ def _heading(
     )
 
 
-def _sources_table(
+def sources_table(
     sources: list[Source],
     generator: IdGenerator,
     styles: dict[str, str] | None = None,
@@ -153,7 +162,10 @@ def _sources_table(
     """Render sources as a `doc_id` / `pages` table.
 
     One row per document, however many pages it is cited for: three rows
-    of `cg_auto.pdf` would only make the table harder to read.
+    of `cg_auto.pdf` would only make the table harder to read. The table
+    spans the width of its column — the whole card, or the column set by
+    `styles` — with borders, a tinted header and striped rows;
+    `TABLE_COLUMNS` sets the width of each column.
 
     Args:
         sources: Sources to display.
@@ -182,6 +194,7 @@ def _sources_table(
     def cell(
         text: str,
         header: bool,
+        cell_styles: dict[str, str],
         text_styles: dict[str, str] | None = None,
     ) -> dict:
         return element_node(
@@ -195,7 +208,7 @@ def _sources_table(
                 )
             ],
             generator,
-            {"backgroundColor": HEADER_BACKGROUND} if header else None,
+            cell_styles,
         )
 
     documents = group_by_document(sources)
@@ -213,27 +226,49 @@ def _sources_table(
         [
             element_node(
                 "tr",
-                [cell(name, True) for name in columns],
+                [
+                    cell(
+                        name,
+                        True,
+                        {
+                            **TABLE_CELL_STYLES,
+                            **TABLE_COLUMNS[name],
+                            "backgroundColor": TABLE_HEADER_BACKGROUND,
+                            "whiteSpace": "nowrap",
+                        },
+                    )
+                    for name in columns
+                ],
                 generator,
             )
         ],
         generator,
     )
     rows = []
-    for doc_id, pages in documents:
+    for index, (doc_id, pages) in enumerate(documents):
+        row_styles = dict(TABLE_CELL_STYLES)
+        if index % 2:
+            row_styles["backgroundColor"] = TABLE_STRIPE_BACKGROUND
         cells = [
-            cell(doc_id, False),
-            cell(", ".join(str(page) for page in pages) or "—", False),
+            cell(doc_id, False, row_styles),
+            cell(
+                ", ".join(str(page) for page in pages) or "—",
+                False,
+                {**row_styles, "textAlign": "center"},
+            ),
         ]
         if with_links:
             cells.append(
-                cell(urls[doc_id] or "—", False, LINK_TEXT_STYLES)
+                cell(
+                    urls[doc_id] or "—", False, row_styles, LINK_TEXT_STYLES
+                )
             )
         rows.append(element_node("tr", cells, generator))
     body = element_node("tbody", rows, generator)
-    return _apply_styles(
+    table = element_node("table", [head, body], generator)
+    blocks = _apply_styles(
         [
-            element_node("table", [head, body], generator),
+            table,
             _paragraph(
                 "À copier-coller dans « Sources corrigées », puis à "
                 "modifier :",
@@ -252,6 +287,12 @@ def _sources_table(
         ],
         styles or {},
     )
+    # `maxWidth` ne contraint pas un tableau en CSS : un `width: 100%`
+    # l'emporterait et ferait sortir le tableau de sa colonne. Il reçoit
+    # donc une largeur explicite, celle de la colonne qui l'accueille, ou
+    # toute la largeur quand il n'est placé dans aucune colonne.
+    table["width"] = (styles or {}).get("maxWidth", "100%")
+    return blocks
 
 
 def answer_label(marker: str) -> str:
@@ -342,11 +383,11 @@ def render_reference_asset(
 
     blocks.append(_heading("h2", "Sources", generator))
     blocks.extend(
-        _sources_table(
+        sources_table(
             entry.sources, generator, url_template=url_template
         )
     )
-    return document(blocks, CARD_STYLES)
+    return document(blocks)
 
 
 def render_review_asset(
@@ -448,8 +489,8 @@ def render_review_asset(
         _heading("h2", "Sources citées", generator, RIGHT_COLUMN_HEADING)
     )
     blocks.extend(
-        _sources_table(
+        sources_table(
             case.sources, generator, RIGHT_COLUMN, url_template
         )
     )
-    return document(blocks, CARD_STYLES)
+    return document(blocks)

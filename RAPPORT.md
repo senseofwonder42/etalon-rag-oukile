@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **153 tests**, tous verts, **sans aucun appel réseau**
+- `uv run pytest` : **157 tests**, dont 1 en échec connu (nom de document accentué), **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -135,24 +135,38 @@ Les noms des variables d'environnement de réglage suivent les champs de
   première version comportait par erreur un accent ; les noms réels
   n'en ont pas, mais la protection est conservée pour les documents qui
   en auraient.
-- **URL longues.** Police réduite et césure autorisée n'importe où dans
-  la cellule, plutôt qu'un libellé court de type « Ouvrir » : tant qu'on
+- **URL longues.** Césure autorisée n'importe où dans la cellule,
+  plutôt qu'un libellé court de type « Ouvrir » : tant qu'on
   ne sait pas si l'URL est cliquable, masquer l'adresse priverait
   l'annotateur du seul moyen de la copier. Si la sonde montre que les
   liens sont cliquables, un libellé court deviendra la meilleure option.
 - **Police et espacements.** La police de base des cartes devait être
   réduite à la racine du document (`fontSize: 0.9em`), en comptant sur
-  l'héritage CSS pour l'étendre à tout le contenu. **Démenti à l'écran** :
-  `0.5em` et `0.9em` rendent pareil, et le réglage de police de
-  l'interface Kili ne change pas les titres — leur taille est fixée par
-  Kili, indépendamment du parent. L'hypothèse d'héritage était donc
-  fausse. La sonde teste désormais `fontSize` en `px` sur l'élément et
-  sur le nœud texte ; le réglage sera déplacé au niveau qu'elle
-  désignera, ou abandonné si aucun ne répond. Les titres
+  l'héritage CSS pour l'étendre à tout le contenu. **Démenti à l'écran,
+  puis tranché par la sonde** : Kili ignore `fontSize` à tous les
+  niveaux — racine, élément, nœud texte, en `em` comme en `px`. Seuls les
+  niveaux de titre changent la taille du texte. Le réglage a donc été
+  retiré (`CARD_STYLES` et le `fontSize` des URL) plutôt que laissé en
+  place sans effet : un style mort accompagné d'un commentaire affirmatif
+  est exactement ce qui avait induit en erreur. Les titres
   de la colonne de droite recevaient une marge verticale nulle, héritée
   du raccourci `margin: 0 0 0 35%` qui sert à décaler la colonne : c'est
   ce qui les collait à leur contenu. Ils ont maintenant leur propre
   marge, avec un espace au-dessus et en dessous.
+- **Tableau des sources.** Il prend toute la largeur de sa colonne par
+  une largeur explicite (`width`). `maxWidth`, qui suffit à cantonner un
+  paragraphe à la colonne de droite, ne contraint pas un tableau en CSS :
+  un premier essai en `width: 100%` faisait ainsi sortir le tableau de la
+  colonne de la réponse générée. Bordures, en-tête teinté, une ligne sur
+  deux grisée et colonne « Pages » centrée : des styles documentés. Pour empêcher les en-têtes de se couper sur un
+  petit écran, chaque colonne reçoit une largeur minimale (`minWidth`) et
+  les en-têtes `whiteSpace: nowrap` — deux styles **non documentés**,
+  posés quand même parce qu'ignorés ils ne cassent rien. Sur un écran
+  trop étroit pour les largeurs minimales, le tableau déborde plutôt que
+  de se tasser : c'est le prix de la lisibilité des en-têtes. La sonde
+  construit désormais ses tableaux avec la fonction de production
+  (`sources_table`, rendue publique pour cela) au lieu d'une copie qui
+  avait dérivé, et ajoute une variante étroite qui simule un petit écran.
 - **Carte de revue en deux colonnes.** La réponse à arbitrer est décalée
   à droite (`margin`, `maxWidth`)
   avec les sources qu'elle cite — elles décrivent la même prédiction — et

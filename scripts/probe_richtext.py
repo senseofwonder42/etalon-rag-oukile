@@ -13,25 +13,30 @@ from loguru import logger
 
 from rag_referentiel.client import create_client
 from rag_referentiel.interfaces import REFERENCE_INTERFACE
-from rag_referentiel.rendering import (
-    CARD_STYLES,
-    LINK_TEXT_STYLES,
-    RIGHT_COLUMN_HEADING,
-)
+from rag_referentiel.rendering import RIGHT_COLUMN_HEADING, sources_table
 from rag_referentiel.richtext import (
     IdGenerator,
     document,
     element_node,
     text_node,
 )
+from rag_referentiel.schemas import Source
 
 EXTERNAL_ID = "sonde_richtext"
-#: Une URL SharePoint réaliste et longue, pour éprouver la largeur de la
-#: colonne « Lien ».
-LONG_URL = (
+#: Gabarit SharePoint réaliste : il produit des URL longues, qui éprouvent
+#: la largeur de la colonne « Lien ».
+PROBE_URL_TEMPLATE = (
     "https://contoso.sharepoint.com/sites/assurance/Documents/"
-    "DCON_ConditionsGénérales_MRH_202605.pdf#page=22"
+    "{doc_id}#page={page}"
 )
+#: Sources de la sonde : un document cité sur plusieurs pages, un autre
+#: sur une seule, comme dans les cartes réelles.
+PROBE_SOURCES = [
+    Source(doc_id="DCON_ConditionsGénérales_MRH_202605.pdf", page=22),
+    Source(doc_id="DCON_ConditionsGénérales_MRH_202605.pdf", page=23),
+    Source(doc_id="DCON_ConditionsGénérales_MRH_202605.pdf", page=24),
+    Source(doc_id="DCON_DIPA_MRH_202605.pdf", page=1),
+]
 
 
 def build_probe_asset() -> list[dict]:
@@ -60,75 +65,11 @@ def build_probe_asset() -> list[dict]:
             level, [text_node(text, generator)], generator
         )
 
-    def cell(
-        text: str,
-        header: bool = False,
-        text_styles: dict[str, str] | None = None,
-    ) -> dict:
-        return element_node(
-            "td",
-            [
-                text_node(
-                    text,
-                    generator,
-                    {"bold"} if header else None,
-                    text_styles,
-                )
-            ],
-            generator,
-            {"backgroundColor": "#eeeeee"} if header else None,
-        )
-
     blocks = [
         heading("h1", "Sonde rich text — h1"),
         heading("h2", "Sous-titre — h2"),
         heading("h3", "Sous-titre — h3"),
         heading("h4", "Sous-titre — h4"),
-        # Taille de police : la racine en `em` n'a eu aucun effet visible,
-        # et le réglage de police de l'interface ne touche pas les titres.
-        # On teste donc `fontSize` en `px` sur chaque niveau de nœud, à
-        # côté d'un témoin sans style, pour voir lequel Kili respecte.
-        heading("h3", "Taille de police"),
-        element_node(
-            "h2",
-            [text_node("h2 témoin, sans style", generator)],
-            generator,
-        ),
-        element_node(
-            "h2",
-            [text_node("h2 — fontSize 12px sur l'élément", generator)],
-            generator,
-            {"fontSize": "12px"},
-        ),
-        element_node(
-            "h2",
-            [
-                text_node(
-                    "h2 — fontSize 12px sur le nœud texte",
-                    generator,
-                    styles={"fontSize": "12px"},
-                )
-            ],
-            generator,
-        ),
-        paragraph([text_node("Paragraphe témoin, sans style.", generator)]),
-        paragraph(
-            [
-                text_node(
-                    "Paragraphe — fontSize 10px sur l'élément.", generator
-                )
-            ],
-            {"fontSize": "10px"},
-        ),
-        paragraph(
-            [
-                text_node(
-                    "Paragraphe — fontSize 10px sur le nœud texte.",
-                    generator,
-                    styles={"fontSize": "10px"},
-                )
-            ]
-        ),
         paragraph(
             [
                 text_node("Normal, ", generator),
@@ -243,56 +184,21 @@ def build_probe_asset() -> list[dict]:
             generator,
             {"borderLeft": "3px solid #9e9e9e", "padding": "4px 8px"},
         ),
-        heading("h3", "Tableau"),
-        element_node(
-            "table",
-            [
-                element_node(
-                    "thead",
-                    [
-                        element_node(
-                            "tr",
-                            [
-                                cell("Document", True),
-                                cell("Pages", True),
-                                cell("Lien", True),
-                            ],
-                            generator,
-                        )
-                    ],
-                    generator,
-                ),
-                element_node(
-                    "tbody",
-                    [
-                        element_node(
-                            "tr",
-                            [
-                                cell("DCON_ConditionsGénérales_MRH_202605.pdf"),
-                                cell("22, 23, 24"),
-                                cell(LONG_URL, text_styles=LINK_TEXT_STYLES),
-                            ],
-                            generator,
-                        ),
-                        element_node(
-                            "tr",
-                            [
-                                cell("DCON_DIPA_MRH_202605.pdf"),
-                                cell("1"),
-                                cell(LONG_URL, text_styles=LINK_TEXT_STYLES),
-                            ],
-                            generator,
-                        ),
-                    ],
-                    generator,
-                ),
-            ],
+        heading("h3", "Tableau pleine largeur"),
+        *sources_table(
+            PROBE_SOURCES, generator, url_template=PROBE_URL_TEMPLATE
+        ),
+        heading("h3", "Tableau étroit, écran réduit simulé"),
+        *sources_table(
+            PROBE_SOURCES,
             generator,
+            {"maxWidth": "340px"},
+            PROBE_URL_TEMPLATE,
         ),
     ]
-    return document(
-        blocks, {**CARD_STYLES, "maxWidth": "900px", "margin": "0 auto"}
-    )
+    # Pas de largeur maximale sur la racine : elle fausserait l'essai du
+    # tableau pleine largeur, que les cartes réelles n'ont pas.
+    return document(blocks)
 
 
 def main() -> None:
@@ -337,14 +243,14 @@ def main() -> None:
         "marques (gras, italique, code, souligné), fonds de couleur,\n"
         "alignements, décalage en colonne de droite, listes, citation,\n"
         "tableau.\n\n"
-        "Dans le tableau : l'URL de la colonne « Lien » est-elle plus\n"
-        "petite, et se replie-t-elle dans sa cellule au lieu d'élargir\n"
-        "la colonne ? Le « Titre dans la colonne de droite » est-il bien\n"
-        "décalé, et séparé du bloc qui le suit ?\n\n"
-        "Section « Taille de police » : chaque titre et chaque paragraphe\n"
-        "stylé est-il plus petit que son témoin ? Noter lequel des deux\n"
-        "niveaux fonctionne — l'élément ou le nœud texte — pour les titres\n"
-        "comme pour le texte courant.\n\n"
+        "Tableau pleine largeur : occupe-t-il toute la largeur ? A-t-il\n"
+        "des bordures, un en-tête teinté, une ligne sur deux grisée ?\n"
+        "Tableau étroit : les en-têtes restent-ils sur une seule ligne ?\n"
+        "Les colonnes gardent-elles leur largeur minimale, quitte à faire\n"
+        "déborder le tableau ? Si les en-têtes se coupent encore,\n"
+        "`minWidth` et `whiteSpace` sont ignorés par Kili.\n"
+        "L'URL se replie-t-elle dans sa cellule ? Le « Titre dans la\n"
+        "colonne de droite » est-il décalé, et séparé du bloc suivant ?\n\n"
         "Puis la question des liens : l'une des trois URL du paragraphe\n"
         "« Lien » est-elle cliquable ? Et la clé « url » de la metadata\n"
         "apparaît-elle à côté de l'asset, cliquable ?"

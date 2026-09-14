@@ -90,20 +90,22 @@ parcourir dans l'ordre, la première fois.
     (brute, en `code`, soulignée et colorée) et renseigne la clé `url`
     du `json_metadata` : vérifier laquelle, s'il y en a une, est
     réellement cliquable. Vérifier aussi que l'URL de la colonne
-    « Lien » est plus petite et se replie dans sa cellule : `fontSize`
-    et `wordBreak` ne figurent pas nommément dans la liste des styles
-    documentés. Voir « Consulter le document source ».
-14. **Police et espacements des cartes.** Constaté à l'écran : le
-    `fontSize` posé sur la racine du document (`CARD_STYLES`) **n'a aucun
-    effet visible** — `0.5em` et `0.9em` rendent pareil. Le réglage de
-    police de l'interface Kili (16 px par défaut) change le texte courant
-    mais **pas les titres**, dont la taille est donc fixée par Kili
-    indépendamment de leur parent. La section « Taille de police » de la
-    sonde teste `fontSize` en `px` sur l'élément et sur le nœud texte,
-    pour un titre et pour un paragraphe, chacun à côté d'un témoin sans
-    style : noter quel niveau est respecté avant de déplacer le réglage.
-    Vérifier aussi que les titres de la colonne de droite sont séparés de
-    leur contenu.
+    « Lien » se replie dans sa cellule : `wordBreak` ne figure pas
+    nommément dans la liste des styles documentés. Voir « Consulter le
+    document source ».
+14. **Police, espacements et tableau des sources.** Tranché à l'écran :
+    **Kili ignore `fontSize`**, que le style soit posé sur la racine, sur
+    l'élément ou sur le nœud texte, en `em` comme en `px`. Seuls les
+    niveaux de titre `h1` à `h4` changent la taille du texte ; le réglage
+    de police de l'interface change le texte courant, jamais les titres.
+    Plus aucun `fontSize` n'est donc émis. Pour le tableau des sources,
+    `width`, `border`, `padding` et `backgroundColor` sont documentés,
+    mais **`minWidth` et `whiteSpace` ne le sont pas** : ce sont eux qui
+    gardent les en-têtes sur une ligne et les colonnes à leur largeur
+    minimale. La sonde affiche le tableau en pleine largeur et dans une
+    boîte de 340 px qui simule un petit écran : si les en-têtes s'y
+    coupent encore, ces deux styles sont ignorés. Vérifier aussi que les
+    titres de la colonne de droite sont séparés de leur contenu.
 15. **Mise en deux colonnes de la carte de revue.** La réponse à
     arbitrer est décalée à droite par les styles `margin` et `maxWidth`,
     son titre par `textAlign`. Si le serveur ignore ces styles, la
@@ -336,9 +338,16 @@ donne cinq sources. Une page n'apparaît donc jamais seule et ne demande
 jamais de préfixe : c'est la même écriture qu'il y ait une page ou dix.
 
 Le tableau des sources de la carte suit la même logique : **une ligne par
-document**, ses pages réunies dans la colonne « Pages ». Et **la liste
-courante est rappelée juste en dessous, déjà au format de saisie** : l'annotateur la copie, modifie ce qu'il
-faut, et colle le résultat dans « Sources corrigées ».
+document**, ses pages réunies dans la colonne « Pages ». Il occupe toute
+la largeur de sa colonne — la carte entière dans le référentiel, la
+colonne de la réponse générée dans la revue — avec des bordures, un
+en-tête teinté et une ligne
+sur deux grisée ; chaque colonne a une largeur relative et une largeur
+minimale (`TABLE_COLUMNS`), pour que les en-têtes ne se coupent pas sur un
+écran étroit — sous réserve que Kili respecte ces styles (point 14 de
+« À vérifier au premier run »). Et **la liste courante est rappelée juste
+en dessous, déjà au format de saisie** : l'annotateur la copie, modifie ce
+qu'il faut, et colle le résultat dans « Sources corrigées ».
 
 L'analyse répare les approximations de saisie plutôt que de les rejeter
 (`sources.py`) :
@@ -501,9 +510,7 @@ Projet B — revue prod  : cl…
   qu'elle cite, en tableau et en liste prête à copier-coller. Les titres
   « Réponse générée à arbitrer » et « Sources citées » sont placés dans
   la colonne de droite, alignés sur son bord gauche, et séparés par un
-  petit espace du contenu qu'ils annoncent. Les deux cartes demandent une
-  police légèrement réduite, sans effet visible pour l'instant (voir le
-  point 14 de « À vérifier au premier run »).
+  petit espace du contenu qu'ils annoncent.
   La question du référentiel à laquelle le cas a été apparié est
   toujours rappelée juste au-dessus des formulations qui s'y rattachent,
   même lorsqu'elle est mot pour mot celle qui a été posée. Sur une
@@ -597,10 +604,10 @@ est inconnue. Deux effets, dès que le gabarit est renseigné :
   arbitraire.
 
 L'URL est une longue chaîne sans espace qui, sans précaution, imposerait
-sa largeur à toute la colonne. Elle est donc affichée en **police
-réduite** (`fontSize: 0.75em`) et **autorisée à se couper n'importe où**
-(`wordBreak: break-all`) : elle se replie dans sa cellule au lieu
-d'élargir le tableau.
+sa largeur à toute la colonne. Elle est donc **autorisée à se couper
+n'importe où** (`wordBreak: break-all`) : elle se replie dans sa cellule
+au lieu d'élargir le tableau. Elle n'est pas réduite : Kili ignore
+`fontSize`.
 
 Un nom de document accentué apparaît dans l'URL sous forme codée — `é`
 devient `%C3%A9`. C'est le codage normal d'un caractère non ASCII dans
@@ -670,7 +677,7 @@ comme un arbitrage humain.
 ## Développement
 
 ```bash
-uv run pytest          # 153 tests, entièrement hors ligne
+uv run pytest          # 157 tests, entièrement hors ligne
 uv run ruff check .
 ```
 

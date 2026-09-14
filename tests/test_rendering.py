@@ -213,15 +213,16 @@ def test_right_column_headings_sit_inside_the_right_column():
     assert "margin" not in headings["Formulations déjà validées"]
 
 
-def test_both_cards_use_a_slightly_smaller_font():
+def test_no_font_size_is_emitted_since_kili_ignores_it():
+    template = "https://sp.exemple.fr/sites/assurance/{doc_id}#page={page}"
     for document in (
-        render_reference_asset(entry()),
+        render_reference_asset(entry(), template),
         render_review_asset(case(), [entry().answers[0]]),
     ):
-        assert document[0]["fontSize"] == "0.9em"
+        assert not any("fontSize" in n for n in nodes(document))
 
 
-def test_a_long_url_is_shrunk_and_allowed_to_wrap():
+def test_a_long_url_is_allowed_to_wrap():
     document = render_reference_asset(
         entry(), "https://sp.exemple.fr/sites/assurance/{doc_id}#page={page}"
     )
@@ -230,8 +231,52 @@ def test_a_long_url_is_shrunk_and_allowed_to_wrap():
         for n in nodes(document)
         if n.get("text", "").startswith("https://")
     )
-    assert link["fontSize"] == "0.75em"
     assert link["wordBreak"] == "break-all"
+
+
+def _table(document):
+    return next(n for n in nodes(document) if n.get("type") == "table")
+
+
+def _rows(table):
+    return [
+        row for section in table["children"] for row in section["children"]
+    ]
+
+
+def test_the_sources_table_spans_the_available_width():
+    assert _table(render_reference_asset(entry()))["width"] == "100%"
+
+
+def test_the_review_table_stays_within_the_answer_column():
+    table = _table(render_review_asset(case(), [entry().answers[0]]))
+    # Une largeur explicite égale à celle de la colonne : `maxWidth` seul
+    # ne contraint pas un tableau.
+    assert table["width"] == table["maxWidth"] == "65%"
+    assert table["margin"] == "0 0 0 35%"
+
+
+def test_table_headers_keep_one_line_and_a_minimum_width():
+    header = _rows(_table(render_reference_asset(entry())))[0]
+    for cell in header["children"]:
+        assert cell["whiteSpace"] == "nowrap"
+        assert cell["minWidth"].endswith("px")
+        assert cell["border"]
+
+
+def test_table_rows_are_striped_and_pages_centred():
+    two_documents = entry().model_copy(
+        update={
+            "sources": [
+                Source(doc_id="cg_auto.pdf", page=12),
+                Source(doc_id="guide.pdf", page=3),
+            ]
+        }
+    )
+    _, first, second = _rows(_table(render_reference_asset(two_documents)))
+    assert "backgroundColor" not in first["children"][0]
+    assert second["children"][0]["backgroundColor"] == "#fafafa"
+    assert first["children"][1]["textAlign"] == "center"
 
 
 def test_every_heading_stays_left_aligned():
