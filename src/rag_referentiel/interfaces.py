@@ -148,10 +148,8 @@ REVIEW_INTERFACE: dict = {
     "jobs": {
         "MEME_QUESTION": _radio_job(
             instruction=(
-                "À remplir uniquement si le motif de mise en revue est "
-                "« APPARIEMENT_INCERTAIN » : la question posée est-elle bien "
-                "la même que la question du référentiel proposée en bas de "
-                "la carte ?"
+                "La question posée est-elle bien "
+                "la même que la question du référentiel ?"
             ),
             categories={"OUI": "Oui", "NON": "Non"},
             required=False,
