@@ -140,10 +140,15 @@ Les noms des variables d'environnement de réglage suivent les champs de
   ne sait pas si l'URL est cliquable, masquer l'adresse priverait
   l'annotateur du seul moyen de la copier. Si la sonde montre que les
   liens sont cliquables, un libellé court deviendra la meilleure option.
-- **Police et espacements.** La police de base des cartes est réduite
-  à la racine du document (`fontSize: 0.9em`) plutôt que sur chaque
-  bloc : l'héritage CSS l'étend à tout le contenu, et les tailles
-  relatives déjà en place (titres, URL en `0.75em`) suivent. Les titres
+- **Police et espacements.** La police de base des cartes devait être
+  réduite à la racine du document (`fontSize: 0.9em`), en comptant sur
+  l'héritage CSS pour l'étendre à tout le contenu. **Démenti à l'écran** :
+  `0.5em` et `0.9em` rendent pareil, et le réglage de police de
+  l'interface Kili ne change pas les titres — leur taille est fixée par
+  Kili, indépendamment du parent. L'hypothèse d'héritage était donc
+  fausse. La sonde teste désormais `fontSize` en `px` sur l'élément et
+  sur le nœud texte ; le réglage sera déplacé au niveau qu'elle
+  désignera, ou abandonné si aucun ne répond. Les titres
   de la colonne de droite recevaient une marge verticale nulle, héritée
   du raccourci `margin: 0 0 0 35%` qui sert à décaler la colonne : c'est
   ce qui les collait à leur contenu. Ils ont maintenant leur propre

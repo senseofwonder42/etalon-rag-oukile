@@ -84,6 +84,51 @@ def build_probe_asset() -> list[dict]:
         heading("h2", "Sous-titre — h2"),
         heading("h3", "Sous-titre — h3"),
         heading("h4", "Sous-titre — h4"),
+        # Taille de police : la racine en `em` n'a eu aucun effet visible,
+        # et le réglage de police de l'interface ne touche pas les titres.
+        # On teste donc `fontSize` en `px` sur chaque niveau de nœud, à
+        # côté d'un témoin sans style, pour voir lequel Kili respecte.
+        heading("h3", "Taille de police"),
+        element_node(
+            "h2",
+            [text_node("h2 témoin, sans style", generator)],
+            generator,
+        ),
+        element_node(
+            "h2",
+            [text_node("h2 — fontSize 12px sur l'élément", generator)],
+            generator,
+            {"fontSize": "12px"},
+        ),
+        element_node(
+            "h2",
+            [
+                text_node(
+                    "h2 — fontSize 12px sur le nœud texte",
+                    generator,
+                    styles={"fontSize": "12px"},
+                )
+            ],
+            generator,
+        ),
+        paragraph([text_node("Paragraphe témoin, sans style.", generator)]),
+        paragraph(
+            [
+                text_node(
+                    "Paragraphe — fontSize 10px sur l'élément.", generator
+                )
+            ],
+            {"fontSize": "10px"},
+        ),
+        paragraph(
+            [
+                text_node(
+                    "Paragraphe — fontSize 10px sur le nœud texte.",
+                    generator,
+                    styles={"fontSize": "10px"},
+                )
+            ]
+        ),
         paragraph(
             [
                 text_node("Normal, ", generator),
@@ -295,8 +340,11 @@ def main() -> None:
         "Dans le tableau : l'URL de la colonne « Lien » est-elle plus\n"
         "petite, et se replie-t-elle dans sa cellule au lieu d'élargir\n"
         "la colonne ? Le « Titre dans la colonne de droite » est-il bien\n"
-        "décalé, et séparé du bloc qui le suit ? La police de l'ensemble\n"
-        "est-elle légèrement réduite ?\n\n"
+        "décalé, et séparé du bloc qui le suit ?\n\n"
+        "Section « Taille de police » : chaque titre et chaque paragraphe\n"
+        "stylé est-il plus petit que son témoin ? Noter lequel des deux\n"
+        "niveaux fonctionne — l'élément ou le nœud texte — pour les titres\n"
+        "comme pour le texte courant.\n\n"
         "Puis la question des liens : l'une des trois URL du paragraphe\n"
         "« Lien » est-elle cliquable ? Et la clé « url » de la metadata\n"
         "apparaît-elle à côté de l'asset, cliquable ?"

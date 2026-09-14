@@ -93,11 +93,17 @@ parcourir dans l'ordre, la première fois.
     « Lien » est plus petite et se replie dans sa cellule : `fontSize`
     et `wordBreak` ne figurent pas nommément dans la liste des styles
     documentés. Voir « Consulter le document source ».
-14. **Police et espacements des cartes.** La police de base est réduite
-    par un `fontSize` posé sur la racine du document, qui compte sur
-    l'héritage CSS pour atteindre tout le contenu. Vérifier sur la sonde
-    que l'ensemble est bien plus petit, et que les titres de la colonne
-    de droite sont séparés de leur contenu.
+14. **Police et espacements des cartes.** Constaté à l'écran : le
+    `fontSize` posé sur la racine du document (`CARD_STYLES`) **n'a aucun
+    effet visible** — `0.5em` et `0.9em` rendent pareil. Le réglage de
+    police de l'interface Kili (16 px par défaut) change le texte courant
+    mais **pas les titres**, dont la taille est donc fixée par Kili
+    indépendamment de leur parent. La section « Taille de police » de la
+    sonde teste `fontSize` en `px` sur l'élément et sur le nœud texte,
+    pour un titre et pour un paragraphe, chacun à côté d'un témoin sans
+    style : noter quel niveau est respecté avant de déplacer le réglage.
+    Vérifier aussi que les titres de la colonne de droite sont séparés de
+    leur contenu.
 15. **Mise en deux colonnes de la carte de revue.** La réponse à
     arbitrer est décalée à droite par les styles `margin` et `maxWidth`,
     son titre par `textAlign`. Si le serveur ignore ces styles, la
@@ -495,8 +501,9 @@ Projet B — revue prod  : cl…
   qu'elle cite, en tableau et en liste prête à copier-coller. Les titres
   « Réponse générée à arbitrer » et « Sources citées » sont placés dans
   la colonne de droite, alignés sur son bord gauche, et séparés par un
-  petit espace du contenu qu'ils annoncent. Les deux cartes utilisent une
-  police légèrement réduite.
+  petit espace du contenu qu'ils annoncent. Les deux cartes demandent une
+  police légèrement réduite, sans effet visible pour l'instant (voir le
+  point 14 de « À vérifier au premier run »).
   La question du référentiel à laquelle le cas a été apparié est
   toujours rappelée juste au-dessus des formulations qui s'y rattachent,
   même lorsqu'elle est mot pour mot celle qui a été posée. Sur une

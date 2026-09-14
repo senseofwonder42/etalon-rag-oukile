@@ -32,8 +32,12 @@ BLOCK_STYLES = {
     "maxWidth": "65%",
 }
 #: Police de base des cartes, un peu réduite : les textes d'assurance
-#: sont longs, et une police plus petite rend la carte plus compacte. Elle
-#: s'applique à la racine du document et se transmet à tout son contenu.
+#: sont longs, et une police plus petite rend la carte plus compacte.
+#: Constaté à l'écran : posée à la racine, cette taille n'a aucun effet
+#: visible (0.5em et 0.9em rendent pareil), et le réglage de police de
+#: l'interface Kili ne touche pas les titres. La section « Taille de
+#: police » de `probe_richtext.py` dit à quel niveau de nœud `fontSize`
+#: est respecté ; ce réglage est à déplacer là une fois la sonde lue.
 CARD_STYLES = {"fontSize": "0.9em"}
 #: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
 #: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
