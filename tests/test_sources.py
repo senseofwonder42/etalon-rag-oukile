@@ -178,8 +178,8 @@ def test_a_real_document_name_round_trips():
 
 
 def test_an_unaccented_document_name_is_left_as_is_in_its_url():
-    url = document_url(TEMPLATE, "DCON_ConditionsGénérales_MRH_202605.pdf", 5)
-    assert url == "https://sp.exemple.fr/docs/DCON_ConditionsGénérales_MRH_202605.pdf#page=5"
+    url = document_url(TEMPLATE, "DCON_ConditionsGenerales_MRH_202605.pdf", 5)
+    assert url == "https://sp.exemple.fr/docs/DCON_ConditionsGenerales_MRH_202605.pdf#page=5"
     assert "%" not in url
 
 

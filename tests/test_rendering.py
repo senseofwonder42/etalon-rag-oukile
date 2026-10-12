@@ -1,4 +1,5 @@
 from rag_referentiel.rendering import (
+    RIGHT_COLUMN,
     render_reference_asset,
     render_review_asset,
 )
@@ -160,14 +161,16 @@ def test_the_answer_to_arbitrate_sits_in_the_right_column():
         for n in nodes(document)
         if n.get("backgroundColor") == "#e8f5e9"
     ]
-    assert candidate and all(n["margin"] == "0 0 0 35%" for n in candidate)
+    assert candidate and all(
+        n["margin"] == RIGHT_COLUMN["margin"] for n in candidate
+    )
     assert validated and all("margin" not in n for n in validated)
 
 
 def test_the_cited_sources_sit_in_the_right_column():
     document = render_review_asset(case(), [entry().answers[0]])
     table = next(n for n in nodes(document) if n.get("type") == "table")
-    assert table["margin"] == "0 0 0 35%"
+    assert table["margin"] == RIGHT_COLUMN["margin"]
 
 
 def test_the_sources_table_carries_the_links_when_configured():
@@ -207,7 +210,7 @@ def test_right_column_headings_sit_inside_the_right_column():
     }
     for title in ("Réponse générée à arbitrer", "Sources citées"):
         top, _, bottom, left = headings[title]["margin"].split()
-        assert left == "35%"
+        assert left == RIGHT_COLUMN["margin"].split()[3]
         # Un espace sépare le titre du contenu qu'il annonce.
         assert bottom != "0"
     assert "margin" not in headings["Formulations déjà validées"]
@@ -252,8 +255,8 @@ def test_the_review_table_stays_within_the_answer_column():
     table = _table(render_review_asset(case(), [entry().answers[0]]))
     # Une largeur explicite égale à celle de la colonne : `maxWidth` seul
     # ne contraint pas un tableau.
-    assert table["width"] == table["maxWidth"] == "65%"
-    assert table["margin"] == "0 0 0 35%"
+    assert table["width"] == table["maxWidth"] == RIGHT_COLUMN["maxWidth"]
+    assert table["margin"] == RIGHT_COLUMN["margin"]
 
 
 def test_table_headers_keep_one_line_and_a_minimum_width():
