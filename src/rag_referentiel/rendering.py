@@ -33,11 +33,11 @@ BLOCK_STYLES = {
 }
 #: Décalage de la colonne de droite, appliqué à tout ce qui décrit la
 #: prédiction : la réponse à arbitrer comme les sources qu'elle cite.
-RIGHT_COLUMN = {"maxWidth": "65%", "margin": "0 0 0 35%"}
+RIGHT_COLUMN = {"maxWidth": "85%", "margin": "0 0 0 15%"}
 #: Même décalage pour les titres de la colonne de droite, avec un espace
 #: au-dessus et en dessous. Le raccourci `margin` de `RIGHT_COLUMN` met
 #: les marges verticales à zéro, ce qui collait le titre à son contenu.
-RIGHT_COLUMN_HEADING = {"maxWidth": "65%", "margin": "16px 0 8px 35%"}
+RIGHT_COLUMN_HEADING = {"maxWidth": "85%", "margin": "16px 0 8px 15%"}
 #: Une URL est une longue chaîne sans espace : sans césure elle impose sa
 #: largeur à toute la colonne. On l'autorise à se couper n'importe où,
 #: pour qu'elle se replie dans sa cellule.
