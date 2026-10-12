@@ -5,7 +5,7 @@ Ce que ce dépôt contient, ce qui a été vérifié, et ce qui reste supposé.
 ## Vérifié
 
 - `uv sync` réussit avec `kili==2.142.1` épinglé dans `pyproject.toml`.
-- `uv run pytest` : **157 tests**, dont 1 en échec connu (nom de document accentué), **sans aucun appel réseau**
+- `uv run pytest` : **196 tests**, dont 1 en échec connu (nom de document accentué), **sans aucun appel réseau**
   (faux client Kili en mémoire, `FakeEmbeddings`, `JugeLexical`,
   `httpx.MockTransport` pour la sonde de disponibilité du modèle Jina).
 - `uv run ruff check .` ne signale rien (`line-length = 79`, docstrings
@@ -45,6 +45,32 @@ Repris en tête du README, section « À vérifier au premier run » :
 7. la visibilité dans l'interface des labels de type `INFERENCE` servant
    de piste d'audit ;
 8. le chemin d'URL d'un projet, reconstruit depuis l'endpoint GraphQL.
+
+## Régénération des réponses non conformes
+
+Un « Presque » ou un « Non » sans version corrigée, mais avec des sources
+de vérité terrain, n'est plus rejeté : il passe en `A_REGENERER`.
+`regenerate.py` rédige alors un brouillon par VLM à partir des pages
+rendues en images, et le soumet en relecture sur un asset jumeau. Un
+plugin Kili et `promote.py` vérifient que les sources saisies existent.
+Le détail est dans [REGENERATION.md](REGENERATION.md), ce qui reste à
+faire dans [A_DEVELOPPER.md](A_DEVELOPPER.md).
+
+Vérifié **hors ligne** :
+
+- 39 tests nouveaux ;
+- un enchaînement réel des scripts `promote.py` → `regenerate.py
+  --hors-ligne` → relecture → `promote.py`, sur le faux client Kili et de
+  vrais PDF ;
+- l'assemblage du plugin (`deploy_plugin.py --construire-seulement`).
+
+**Non vérifié :** aucun appel réel au VLM (pas de clé dans
+l'environnement), aucun déploiement du plugin chez Kili.
+
+`pymupdf` est désormais une dépendance déclarée. Il était présent dans
+l'environnement mais absent de `uv.lock`, et un `uv sync` l'aurait
+retiré. `bootstrap.py --creer-projet-revue` crée le projet B pour des
+données réelles, ce que seule la démonstration savait faire.
 
 ## Correction ciblée d'une formulation (option A)
 

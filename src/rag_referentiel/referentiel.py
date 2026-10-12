@@ -37,7 +37,7 @@ from .schemas import (
     Status,
     today,
 )
-from .sources import display_metadata, parse_sources
+from .sources import display_metadata, parse_sources, source_list_problems
 from .storage import AssetPayload, prepare_payload, write_with_fallback
 
 ENTRY_FIELDS = [
@@ -71,9 +71,14 @@ class PromotionReport(BaseModel):
     reference_labels_consumed: int = 0
     answers_replaced: int = 0
     answers_removed: int = 0
+    sent_to_regeneration: int = 0
+    drafts_promoted: int = 0
+    drafts_edited: int = 0
+    sources_to_fix: int = 0
     unknown_markers: list[str] = Field(default_factory=list)
     unreadable_sources: list[str] = Field(default_factory=list)
     removed_sources: list[str] = Field(default_factory=list)
+    invalid_sources: list[str] = Field(default_factory=list)
     details: list[dict] = Field(default_factory=list)
 
 
@@ -565,7 +570,7 @@ def build_entry(
 # --------------------------------------------------------------------- #
 # Promotion : de la revue vers le référentiel
 # --------------------------------------------------------------------- #
-def _promotion_target(arbitrated: ArbitratedCase) -> str | None:
+def promotion_target(arbitrated: ArbitratedCase) -> str | None:
     """Determine which repository entry an arbitration targets.
 
     Args:
@@ -603,6 +608,8 @@ def _text_to_promote(arbitrated: ArbitratedCase) -> tuple[str | None, Origin]:
     Returns:
         The pair (text to push or `None`, origin to record).
     """
+    if arbitrated.case.motif == "RELECTURE_BROUILLON":
+        return _draft_text_to_promote(arbitrated)
     label = arbitrated.label
     verdict = label.candidate_correct
     if verdict == "OUI":
@@ -614,12 +621,132 @@ def _text_to_promote(arbitrated: ArbitratedCase) -> tuple[str | None, Origin]:
             )
             return label.corrected_version, origin
         logger.info(
-            "Cas {} arbitré « {} » sans version corrigée : rien n'est "
-            "versé au référentiel.",
+            "Cas {} arbitré « {} » sans version corrigée : aucun texte à "
+            "verser, brouillon à rédiger si les sources le permettent.",
             arbitrated.external_id,
             verdict,
         )
     return None, "rag_valide"
+
+
+def _same_text(first: str, second: str) -> bool:
+    """Compare two texts, ignoring whitespace differences.
+
+    Args:
+        first: First text.
+        second: Second text.
+
+    Returns:
+        `True` when both texts carry the same words in the same order.
+    """
+    return first.split() == second.split()
+
+
+def edited_draft(arbitrated: ArbitratedCase) -> str | None:
+    """Return the proofreader's correction of a draft, if any.
+
+    The draft is pre-filled in `VERSION_CORRIGEE`: a text identical to the
+    draft is therefore not a correction.
+
+    Args:
+        arbitrated: Proofreading case and its arbitration.
+
+    Returns:
+        The corrected text, or `None` when the draft was left as is.
+    """
+    typed = arbitrated.label.corrected_version
+    if typed and not _same_text(typed, arbitrated.case.candidate_answer):
+        return typed
+    return None
+
+
+def _draft_text_to_promote(
+    arbitrated: ArbitratedCase,
+) -> tuple[str | None, Origin]:
+    """Determine the wording to push after proofreading a draft.
+
+    Args:
+        arbitrated: Proofreading case and its arbitration.
+
+    Returns:
+        The pair (text to push or `None`, origin to record). A draft
+        accepted as is, or corrected (« Presque »), keeps the
+        `llm_regenere` origin; a wording rewritten after a « Non » owes
+        nothing to the draft and is recorded as `metier`.
+    """
+    verdict = arbitrated.label.candidate_correct
+    edited = edited_draft(arbitrated)
+    draft = arbitrated.case.candidate_answer.strip()
+    if verdict == "OUI" and (edited or draft):
+        return edited or draft, "llm_regenere"
+    if verdict == "PRESQUE" and edited:
+        return edited, "llm_regenere"
+    if verdict == "NON" and edited:
+        return edited, "metier"
+    logger.info(
+        "Brouillon {} arbitré « {} » sans texte exploitable : rien n'est "
+        "versé au référentiel.",
+        arbitrated.external_id,
+        verdict,
+    )
+    return None, "llm_regenere"
+
+
+def ground_truth_sources(arbitrated: ArbitratedCase) -> list[Source]:
+    """Determine the sources a regenerated answer must be written from.
+
+    Args:
+        arbitrated: Review case and its arbitration.
+
+    Returns:
+        The corrected sources when the business team typed some, the
+        cited sources when it judged them relevant, nothing otherwise.
+    """
+    label = arbitrated.label
+    if label.corrected_sources:
+        sources, _ = parse_sources(label.corrected_sources)
+        return sources
+    if label.sources_relevant == "OUI":
+        return list(arbitrated.case.sources)
+    return []
+
+
+def needs_regeneration(arbitrated: ArbitratedCase) -> bool:
+    """Tell whether a draft should be written for an arbitrated case.
+
+    Args:
+        arbitrated: Review case and its arbitration.
+
+    Returns:
+        `True` for a « Presque » or « Non » left without a corrected
+        version, when ground truth sources are known. A proofreading
+        case never qualifies: a rejected draft is not redrafted.
+    """
+    label = arbitrated.label
+    return (
+        arbitrated.case.motif != "RELECTURE_BROUILLON"
+        and label.candidate_correct in {"PRESQUE", "NON"}
+        and not label.corrected_version
+        and bool(ground_truth_sources(arbitrated))
+    )
+
+
+def _source_problems(
+    text: str | None, page_counts: dict[str, int] | None
+) -> list[str]:
+    """Check a typed source list against the known documents.
+
+    Args:
+        text: Source list typed by an annotator.
+        page_counts: Pages of each known document; `None` disables the
+            check.
+
+    Returns:
+        The problems found, empty when the list is valid or unchecked.
+    """
+    if not text or page_counts is None:
+        return []
+    return source_list_problems(text, page_counts)
 
 
 def _update_sources(
@@ -676,6 +803,7 @@ def promote_batch(
     reference_project_id: str,
     review_project_id: str,
     settings: Settings,
+    page_counts: dict[str, int] | None = None,
 ) -> PromotionReport:
     """Move the arbitrations of project B into project A.
 
@@ -683,11 +811,21 @@ def promote_batch(
     `EN_ATTENTE`, a wording already present is discarded as a near
     duplicate, and `version` is bumped only when the state changes.
 
+    A « Presque » or « Non » left without a corrected version, but with
+    known ground truth sources, is not rejected: it goes to
+    `A_REGENERER`, for `regenerate.py` to write a draft.
+
     Args:
         kili: Kili client.
         reference_project_id: Identifier of project A.
         review_project_id: Identifier of project B.
         settings: Runtime settings.
+        page_counts: Pages of each local source document. When given, a
+            corrected source list that is partly unreadable, or names a
+            missing document or page, blocks its case in
+            `SOURCES_A_CORRIGER` and sends it back to the annotator; the
+            cases already blocked are read again, to be released once
+            corrected.
 
     Returns:
         The report of the run.
@@ -698,18 +836,39 @@ def promote_batch(
         for entry in load_entries(kili, reference_project_id)
     }
     apply_reference_labels(
-        kili, reference_project_id, entries, settings, report
+        kili, reference_project_id, entries, settings, report, page_counts
     )
 
     arbitrated_cases = read_arbitrated_cases(kili, review_project_id)
+    if page_counts is not None:
+        arbitrated_cases += read_arbitrated_cases(
+            kili, review_project_id, "SOURCES_A_CORRIGER"
+        )
     report.cases_read = len(arbitrated_cases)
     promoted: list[str] = []
     rejected: list[str] = []
+    to_regenerate: list[str] = []
+    to_fix: list[str] = []
+    newly_blocked: list[str] = []
     cases_by_id: dict[str, ReviewCase] = {}
 
     for arbitrated in arbitrated_cases:
         cases_by_id[arbitrated.external_id] = arbitrated.case
-        question_id = _promotion_target(arbitrated)
+        problems = _source_problems(
+            arbitrated.label.corrected_sources, page_counts
+        )
+        if problems:
+            report.invalid_sources.extend(
+                f"{arbitrated.external_id} : {problem}"
+                for problem in problems
+            )
+            if arbitrated.case.statut_revue != "SOURCES_A_CORRIGER":
+                to_fix.append(arbitrated.external_id)
+                newly_blocked.append(arbitrated.external_id)
+            report.sources_to_fix += 1
+            continue
+
+        question_id = promotion_target(arbitrated)
         if question_id is None:
             report.skipped += 1
             continue
@@ -718,11 +877,21 @@ def promote_batch(
         date = arbitrated.label.date or today()
         if _judge_business_disagreement(arbitrated):
             report.judge_business_disagreements += 1
+        if text is not None and arbitrated.case.motif == (
+            "RELECTURE_BROUILLON"
+        ):
+            report.drafts_promoted += 1
+            if edited_draft(arbitrated):
+                report.drafts_edited += 1
 
         if question_id not in entries:
             if text is None:
-                rejected.append(arbitrated.external_id)
-                report.rejected += 1
+                if needs_regeneration(arbitrated):
+                    to_regenerate.append(arbitrated.external_id)
+                    report.sent_to_regeneration += 1
+                else:
+                    rejected.append(arbitrated.external_id)
+                    report.rejected += 1
                 continue
             entry = build_entry(
                 question=arbitrated.case.question,
@@ -781,7 +950,10 @@ def promote_batch(
                     text or "",
                 )
 
-        if text is None:
+        if text is None and needs_regeneration(arbitrated):
+            to_regenerate.append(arbitrated.external_id)
+            report.sent_to_regeneration += 1
+        elif text is None:
             rejected.append(arbitrated.external_id)
             report.rejected += 1
         else:
@@ -801,6 +973,18 @@ def promote_batch(
     set_review_status(
         kili, review_project_id, rejected, "REJETE", cases_by_id
     )
+    set_review_status(
+        kili, review_project_id, to_regenerate, "A_REGENERER", cases_by_id
+    )
+    set_review_status(
+        kili, review_project_id, to_fix, "SOURCES_A_CORRIGER", cases_by_id
+    )
+    if newly_blocked:
+        # Renvoyé une seule fois, au moment du blocage : le cas reste
+        # ensuite dans la file de l'annotateur jusqu'à sa correction.
+        kili.send_back_to_queue(
+            project_id=review_project_id, external_ids=newly_blocked
+        )
     return report
 
 
@@ -809,6 +993,7 @@ def _apply_label(
     label: dict,
     settings: Settings,
     report: PromotionReport,
+    page_counts: dict[str, int] | None = None,
 ) -> bool:
     """Apply one project A arbitration to an entry.
 
@@ -817,6 +1002,10 @@ def _apply_label(
         label: Human label returned by Kili.
         settings: Runtime settings.
         report: Report to complete.
+        page_counts: Pages of each local source document. When given, a
+            corrected source list that is partly unreadable, or names a
+            missing document or page, is ignored and reported rather than
+            applied.
 
     Returns:
         `True` when the entry changed.
@@ -887,7 +1076,17 @@ def _apply_label(
         changed = changed or bool(removed)
 
     sources_text = transcription(response, "SOURCES_CORRIGEES")
-    if sources_text:
+    problems = _source_problems(sources_text, page_counts)
+    if problems:
+        logger.warning(
+            "Sources corrigées ignorées sur {} : {}",
+            entry.question_id,
+            " ; ".join(problems),
+        )
+        report.invalid_sources.extend(
+            f"{entry.question_id} : {problem}" for problem in problems
+        )
+    elif sources_text:
         sources, unreadable = parse_sources(sources_text)
         report.unreadable_sources.extend(
             f"{entry.question_id} : {fragment}" for fragment in unreadable
@@ -917,6 +1116,7 @@ def apply_reference_labels(
     entries: dict[str, ReferenceEntry],
     settings: Settings,
     report: PromotionReport,
+    page_counts: dict[str, int] | None = None,
 ) -> None:
     """Apply the arbitrations carried by the project A assets.
 
@@ -932,6 +1132,8 @@ def apply_reference_labels(
         entries: Repository entries, by `question_id`, modified in place.
         settings: Runtime settings.
         report: Report to complete.
+        page_counts: Pages of each local source document, to check the
+            corrected sources; `None` disables the check.
     """
     for asset in kili.assets(project_id=project_id, fields=ENTRY_FIELDS):
         metadata = load_metadata(asset.get("jsonMetadata"))
@@ -950,7 +1152,10 @@ def apply_reference_labels(
 
         changed = False
         for label in pending:
-            changed = _apply_label(entry, label, settings, report) or changed
+            changed = (
+                _apply_label(entry, label, settings, report, page_counts)
+                or changed
+            )
         report.reference_labels_consumed += len(pending)
 
         if changed:

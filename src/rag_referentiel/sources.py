@@ -13,7 +13,9 @@ Parsing stays deliberately tolerant: annotators type by hand, so the
 usual slips are repaired rather than rejected (see `parse_sources`).
 """
 
+import difflib
 import re
+import unicodedata
 from urllib.parse import quote
 
 from loguru import logger
@@ -256,3 +258,65 @@ def display_metadata(
     doc_id, pages = documents[0]
     url = document_url(template, doc_id, pages[0] if pages else None)
     return {"url": url} if url else {}
+
+
+def check_sources_exist(
+    sources: list[Source], page_counts: dict[str, int]
+) -> list[str]:
+    """Check that every source names an existing document and page.
+
+    This is the check shared by the scripts, which read the local PDF
+    files, and by the Kili plugin, which only carries a catalogue of page
+    counts: both must reach the same verdict on the same input.
+
+    Args:
+        sources: Parsed sources.
+        page_counts: Number of pages of each known document, by name.
+            Names are compared in composed Unicode form (NFC), like
+            `Source.doc_id`.
+
+    Returns:
+        One readable message per problem, in French since the business
+        team reads them; empty when every source exists.
+    """
+    known = {
+        unicodedata.normalize("NFC", name): count
+        for name, count in page_counts.items()
+    }
+    problems: list[str] = []
+    for source in sources:
+        count = known.get(source.doc_id)
+        if count is None:
+            message = f"document inconnu : « {source.doc_id} »"
+            close = difflib.get_close_matches(
+                source.doc_id, list(known), n=1, cutoff=0.6
+            )
+            if close:
+                message += f" (vouliez-vous dire « {close[0]} » ?)"
+            problems.append(message)
+        elif source.page is not None and not 1 <= source.page <= count:
+            problems.append(
+                f"page {source.page} inexistante : « {source.doc_id} » "
+                f"compte {count} page{'s' if count > 1 else ''}"
+            )
+    return problems
+
+
+def source_list_problems(text: str, page_counts: dict[str, int]) -> list[str]:
+    """List what is wrong with a typed source list.
+
+    Shared by `promote.py` and the Kili plugin: unreadable fragments and
+    sources naming a missing document or page both block the list, since
+    either way the business team meant something that cannot be applied.
+
+    Args:
+        text: Source list typed by an annotator.
+        page_counts: Number of pages of each known document, by name.
+
+    Returns:
+        One readable message per problem; empty when the list is valid.
+    """
+    sources, unreadable = parse_sources(text)
+    return [
+        f"saisie illisible : « {fragment} »" for fragment in unreadable
+    ] + check_sources_exist(sources, page_counts)

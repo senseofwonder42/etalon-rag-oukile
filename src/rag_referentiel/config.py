@@ -1,5 +1,8 @@
 """Project configuration, read from the environment and the .env file."""
 
+from pathlib import Path
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -56,6 +59,29 @@ class Settings(BaseSettings):
     # « https://contoso.sharepoint.com/sites/assurance/{doc_id}#page={page} ».
     # Laisser vide si les documents ne sont publiés nulle part.
     document_url_template: str | None = None
+    # Répertoire local des PDF sources. Le `doc_id` d'une source est le nom
+    # du fichier. Renseigné, il active la vérification d'existence des
+    # sources à la promotion et la régénération des réponses.
+    documents_dir: Path | None = None
+
+    # --- Régénération des réponses non conformes ------------------------
+    regeneration_model: str = "claude-opus-5-5"
+    regeneration_effort: Literal["low", "medium", "high", "xhigh", "max"] = (
+        "high"
+    )
+    # Résolution du rendu des pages envoyées au VLM.
+    regeneration_dpi: int = Field(default=150, ge=50, le=400)
+    # Au-delà, le cas part en relecture sans brouillon plutôt que de
+    # tronquer silencieusement les pages de vérité terrain.
+    regeneration_max_pages: int = Field(default=20, ge=1)
+    regeneration_max_attempts: int = Field(default=3, ge=1)
+    # Repli côté serveur sur un autre modèle quand le modèle refuse une
+    # requête (paramètre `fallbacks` de l'API). À couper si l'accès passe
+    # par une passerelle qui ne le connaît pas.
+    regeneration_fallbacks: bool = True
+    # Fichier texte facultatif : consignes de forme du prompt de la RAG de
+    # production, pour que le brouillon lui ressemble.
+    regeneration_style_file: Path | None = None
 
     # --- Stockage ---------------------------------------------------------
     max_metadata_size: int = Field(default=60_000, ge=1_000)

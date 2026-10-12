@@ -166,8 +166,19 @@ REVIEW_INTERFACE: dict = {
         "VERSION_CORRIGEE": _transcription_job(
             instruction=(
                 "Si la réponse générée est « Presque » ou « Non » : écrire "
-                "ici la bonne formulation. Elle rejoindra le référentiel à "
-                "la place de la réponse générée."
+                "ici la bonne formulation, qui rejoindra le référentiel. "
+                "Laisser vide pour qu'un brouillon soit rédigé "
+                "automatiquement à partir des bonnes sources : il vous "
+                "sera soumis en relecture."
+            ),
+            required=False,
+        ),
+        "CONSIGNE_CORRECTION": _transcription_job(
+            instruction=(
+                "Facultatif, si « Version corrigée » est laissée vide : "
+                "ce qui est faux dans la réponse générée, en une phrase "
+                "(par exemple « c'est 5 jours ouvrés, pas calendaires »). "
+                "Le brouillon en tiendra compte."
             ),
             required=False,
         ),

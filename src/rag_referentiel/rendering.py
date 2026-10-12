@@ -91,6 +91,13 @@ REASON_LABELS = {
     "REVERIFICATION_DOC": (
         "Un document source a changé : l'entrée est à revérifier."
     ),
+    "RELECTURE_BROUILLON": (
+        "Brouillon rédigé automatiquement à partir des sources de vérité "
+        "terrain, après un premier arbitrage « Presque » ou « Non ». Le "
+        "relire : « Oui » s'il convient tel quel ; sinon le corriger dans "
+        "« Version corrigée » et répondre « Presque », ou répondre « Non » "
+        "et y écrire la bonne formulation."
+    ),
 }
 
 
@@ -390,6 +397,59 @@ def render_reference_asset(
     return document(blocks)
 
 
+def _reference_section(
+    case: ReviewCase,
+    validated_answers: list[Answer],
+    candidate_question: str | None,
+    generator: IdGenerator,
+) -> list[dict]:
+    """Render the reference question and its validated wordings.
+
+    Args:
+        case: Review case being rendered.
+        validated_answers: Wordings already validated for this question.
+        candidate_question: Question of the matched reference entry, when
+            there is one.
+        generator: Id generator of the document.
+
+    Returns:
+        The block nodes of the section, possibly empty.
+    """
+    blocks: list[dict] = []
+    uncertain = case.motif == "APPARIEMENT_INCERTAIN"
+    if candidate_question:
+        blocks.append(
+            _heading(
+                "h2",
+                "Question du référentiel proposée"
+                if uncertain
+                else "Question du référentiel appariée",
+                generator,
+            )
+        )
+        blocks.append(
+            _paragraph(candidate_question, generator, styles=QUESTION_STYLES)
+        )
+
+    # Sur une question inédite il n'y a rien à montrer : la section
+    # entière disparaît plutôt que d'afficher un « aucune ».
+    if validated_answers:
+        blocks.append(
+            _heading(
+                "h2",
+                "Formulations validées pour cette question"
+                if candidate_question
+                else "Formulations déjà validées",
+                generator,
+            )
+        )
+        for answer in validated_answers:
+            blocks.extend(
+                _answer_block(answer, generator, VALIDATED_STYLES)
+            )
+    return blocks
+
+
 def render_review_asset(
     case: ReviewCase,
     validated_answers: list[Answer],
@@ -438,37 +498,11 @@ def render_review_asset(
         )
     )
 
-    uncertain = case.motif == "APPARIEMENT_INCERTAIN"
-    if candidate_question:
-        blocks.append(
-            _heading(
-                "h2",
-                "Question du référentiel proposée"
-                if uncertain
-                else "Question du référentiel appariée",
-                generator,
-            )
+    blocks.extend(
+        _reference_section(
+            case, validated_answers, candidate_question, generator
         )
-        blocks.append(
-            _paragraph(candidate_question, generator, styles=QUESTION_STYLES)
-        )
-
-    # Sur une question inédite il n'y a rien à montrer : la section
-    # entière disparaît plutôt que d'afficher un « aucune ».
-    if validated_answers:
-        blocks.append(
-            _heading(
-                "h2",
-                "Formulations validées pour cette question"
-                if candidate_question
-                else "Formulations déjà validées",
-                generator,
-            )
-        )
-        for answer in validated_answers:
-            blocks.extend(
-                _answer_block(answer, generator, VALIDATED_STYLES)
-            )
+    )
 
     blocks.append(
         _heading(
@@ -493,4 +527,123 @@ def render_review_asset(
             case.sources, generator, RIGHT_COLUMN, url_template
         )
     )
+    return document(blocks)
+
+
+def _blockquote(text: str, generator: IdGenerator, color: str) -> dict:
+    """Build a framed notice.
+
+    Args:
+        text: Content of the notice.
+        generator: Id generator of the document.
+        color: Colour of the left border.
+
+    Returns:
+        The blockquote node.
+    """
+    return element_node(
+        "blockquote",
+        [_paragraph(text, generator)],
+        generator,
+        {"borderLeft": f"3px solid {color}", "padding": "4px 8px"},
+    )
+
+
+def render_draft_review_asset(
+    case: ReviewCase,
+    validated_answers: list[Answer],
+    candidate_question: str | None = None,
+    url_template: str | None = None,
+) -> list[dict]:
+    """Compose the card of a regenerated draft to proofread (project B).
+
+    Same layout as the review card: what stands as truth on the left,
+    the draft to judge and the ground truth sources it was written from
+    on the right. The business instruction and the rejected answer come
+    along, so the proofreader sees what the draft was meant to fix.
+
+    Args:
+        case: Review case of motif `RELECTURE_BROUILLON`; its
+            `candidate_answer` is the draft, empty when drafting failed.
+        validated_answers: Wordings already validated for this question.
+        candidate_question: Question of the matched reference entry, when
+            there is one.
+        url_template: Template of the document URLs, shown in the sources
+            table when it is configured.
+
+    Returns:
+        The `json_content` of the asset.
+    """
+    generator = IdGenerator()
+    blocks: list[dict] = [_heading("h1", case.question, generator)]
+    blocks.append(
+        _blockquote(REASON_LABELS[case.motif], generator, "#9e9e9e")
+    )
+    if case.erreur_regeneration:
+        blocks.append(
+            _blockquote(
+                "Le brouillon n'a pas pu être rédigé : "
+                f"{case.erreur_regeneration} Répondre « Non » et écrire "
+                "la bonne formulation dans « Version corrigée ».",
+                generator,
+                "#e65100",
+            )
+        )
+
+    blocks.extend(
+        _reference_section(
+            case, validated_answers, candidate_question, generator
+        )
+    )
+    if case.consigne_correction:
+        blocks.append(
+            _heading("h2", "Consigne donnée au premier arbitrage", generator)
+        )
+        blocks.append(
+            _paragraph(
+                case.consigne_correction, generator, styles=QUESTION_STYLES
+            )
+        )
+
+    blocks.append(
+        _heading("h2", "Brouillon à relire", generator, RIGHT_COLUMN_HEADING)
+    )
+    if case.candidate_answer.strip():
+        blocks.extend(
+            _apply_styles(
+                markdown_to_richtext(case.candidate_answer, generator),
+                CANDIDATE_STYLES,
+            )
+        )
+    else:
+        blocks.append(
+            _paragraph(
+                "Aucun brouillon.",
+                generator,
+                styles={"color": GREY, **RIGHT_COLUMN},
+            )
+        )
+
+    blocks.append(
+        _heading(
+            "h2",
+            "Sources de vérité terrain",
+            generator,
+            RIGHT_COLUMN_HEADING,
+        )
+    )
+    blocks.extend(
+        sources_table(case.sources, generator, RIGHT_COLUMN, url_template)
+    )
+
+    if case.reponse_rejetee:
+        blocks.append(
+            _heading("h2", "Réponse générée rejetée", generator)
+        )
+        blocks.extend(
+            _apply_styles(
+                markdown_to_richtext(case.reponse_rejetee, generator),
+                {"color": GREY},
+            )
+        )
     return document(blocks)

@@ -122,6 +122,25 @@ parcourir dans l'ordre, la première fois.
     `anthropic`. Le prompt attend un objet JSON ; une réponse illisible
     est traitée comme « non conforme, confiance nulle », ce qui envoie le
     cas en revue plutôt que de le passer sous silence.
+18. **Premier appel réel au VLM de régénération.** Aucun appel n'a pu
+    être fait sans clé : le chemin complet n'a tourné qu'avec le
+    rédacteur hors ligne et un client simulé. Lancer d'abord
+    `regenerate.py` sur un ou deux cas. Si l'accès à l'API passe par une
+    passerelle qui refuse le paramètre `fallbacks`, mettre
+    `REGENERATION_FALLBACKS=false`.
+19. **Pré-remplissage par un label `PREDICTION`.** Le brouillon est
+    déposé dans `VERSION_CORRIGEE` par un label `PREDICTION`. Vérifier
+    qu'il apparaît pré-rempli à l'ouverture de l'asset de relecture.
+    Sinon, rien ne casse : « Oui » sans texte promeut le brouillon
+    stocké en metadata. Le relecteur doit simplement recopier le texte
+    pour le retoucher.
+20. **Plugin de vérification des sources.** Ni déployé ni exécuté chez
+    Kili. Vérifier dans l'ordre : que les plugins sont ouverts sur
+    l'instance ; que `requirements.txt` s'installe (`pydantic` v2,
+    `loguru`) ; que `catalogue` et `rag_referentiel` s'importent depuis
+    la racine de l'archive ; que l'issue est visible par l'annotateur ;
+    que l'asset revient dans sa file. Journaux :
+    `kili.get_plugin_logs(project_id, plugin_name)`.
 
 ---
 
@@ -137,8 +156,12 @@ flowchart TD
     MON -->|INCERTAIN| B[("Projet B — Revue prod<br/>1 asset = 1 occurrence")]
     MON -->|NOUVELLE| B
     B --> METIER["Arbitrage métier<br/>dans l'interface Kili"]
+    METIER -.->|à la soumission| PLUG["Plugin Kili<br/>sources existantes ?"]
+    PLUG -.->|non : issue, renvoi en file| METIER
     METIER --> PROMO["promote.py"]
     PROMO -->|variantes, sources, nouvelles entrées| A
+    PROMO -->|Presque / Non sans version| REG["regenerate.py<br/>pages en images → VLM"]
+    REG -->|brouillon à relire| B
     REV["reverify_docs.py --declencher"] -->|statut A_REVERIFIER| A
     A -->|job ENTREE_TOUJOURS_VALIDE| PROMO
     A --> EXP["export_referentiel.py<br/>JSONL des entrées ACTIF"]
@@ -196,7 +219,8 @@ Les schémas pydantic de `schemas.py` sont sérialisés dans le
 
 - `statut` ∈ `ACTIF`, `A_REVERIFIER`, `ARCHIVE`. **Seul `ACTIF` entre dans
   le scoring** ; `monitor_run.py` ne charge que ces entrées.
-- `origine` ∈ `metier`, `rag_valide`, `rag_corrige`.
+- `origine` ∈ `metier`, `rag_valide`, `rag_corrige`, `llm_regenere`
+  (brouillon rédigé par le VLM, validé ou retouché par le métier).
 - `auteur` est le **métier qui a arbitré dans le projet B**, recopié depuis
   le label ; ce n'est pas la clé d'API qui écrit dans A.
 - `derniere_promotion` est le **filigrane** de la campagne du projet A :
@@ -227,8 +251,13 @@ Les schémas pydantic de `schemas.py` sont sérialisés dans le
 ```
 
 - `motif` ∈ `NOUVELLE_QUESTION`, `DIVERGENCE`, `APPARIEMENT_INCERTAIN`,
-  `REVERIFICATION_DOC`.
-- `statut_revue` ∈ `EN_ATTENTE`, `PROMU`, `REJETE`.
+  `REVERIFICATION_DOC`, `RELECTURE_BROUILLON`.
+- `statut_revue` ∈ `EN_ATTENTE`, `PROMU`, `REJETE`, `A_REGENERER`,
+  `REGENERE`, `SOURCES_A_CORRIGER` (voir « Régénération des réponses non
+  conformes »).
+- Sur un asset `RELECTURE_BROUILLON`, `candidate_answer` porte le
+  brouillon. S'y ajoutent `cas_origine`, `consigne_correction`,
+  `reponse_rejetee` et, si la rédaction a échoué, `erreur_regeneration`.
 - `question_id_candidat` n'est renseigné que pour un appariement incertain.
 
 ### Repli de taille du `json_metadata`
@@ -308,7 +337,8 @@ job à cases à cocher.
 | --- | --- | --- | --- |
 | `MEME_QUESTION` | radio `OUI` / `NON` | non | uniquement si `motif = APPARIEMENT_INCERTAIN` ; l'instruction le dit |
 | `CANDIDATE_CORRECTE` | radio `OUI` / `PRESQUE` / `NON` | oui | verdict métier sur la réponse générée |
-| `VERSION_CORRIGEE` | transcription | non | la bonne formulation, quand la réponse est `PRESQUE` **ou** `NON` |
+| `VERSION_CORRIGEE` | transcription | non | la bonne formulation, quand la réponse est `PRESQUE` **ou** `NON` ; vide, un brouillon est rédigé ; sur une relecture, pré-remplie avec le brouillon |
+| `CONSIGNE_CORRECTION` | transcription | non | ce qui est faux, en une phrase, quand `VERSION_CORRIGEE` est laissée vide : le brouillon en tient compte |
 | `SOURCES_PERTINENTES` | radio `OUI` / `PARTIEL` / `NON` | oui | les sources citées soutiennent-elles la réponse ? |
 | `SOURCES_CORRIGEES` | transcription | non | liste corrigée, même format |
 
@@ -319,7 +349,13 @@ Ce que `promote.py` en fait :
 | `CANDIDATE_CORRECTE = OUI` | la réponse candidate rejoint `answers[]`, `origine = rag_valide` |
 | `PRESQUE` **et** `VERSION_CORRIGEE` renseignée | c'est le texte corrigé qui rejoint `answers[]`, `origine = rag_corrige` |
 | `NON` **et** `VERSION_CORRIGEE` renseignée | la formulation du métier rejoint `answers[]`, `origine = metier` — elle ne doit rien à ce qu'a produit la RAG |
-| `PRESQUE` ou `NON` sans `VERSION_CORRIGEE` | rien n'est écrit, le cas passe en `REJETE` |
+| `PRESQUE` ou `NON` sans `VERSION_CORRIGEE`, avec des sources de vérité terrain (`SOURCES_CORRIGEES`, ou `SOURCES_PERTINENTES = OUI`) | rien n'est encore écrit ; le cas passe en `A_REGENERER` et `regenerate.py` rédige un brouillon |
+| `PRESQUE` ou `NON` sans `VERSION_CORRIGEE` ni sources de vérité terrain | rien n'est écrit, le cas passe en `REJETE` |
+| relecture : `OUI` | le brouillon (ou sa version retouchée) rejoint `answers[]`, `origine = llm_regenere` |
+| relecture : `PRESQUE` et brouillon retouché | le texte retouché rejoint `answers[]`, `origine = llm_regenere` |
+| relecture : `NON` et texte réécrit | la formulation du métier rejoint `answers[]`, `origine = metier` |
+| relecture : `PRESQUE` ou `NON` sans retouche | rien n'est écrit, `REJETE` ; un brouillon rejeté n'est jamais réécrit |
+| `SOURCES_CORRIGEES` illisible ou citant un document ou une page absents (si `DOCUMENTS_DIR` est renseigné) | rien n'est appliqué ; le cas passe en `SOURCES_A_CORRIGER` et retourne dans la file du métier |
 | `MEME_QUESTION = NON` sur un cas incertain | **nouvelle** entrée créée dans A |
 | `MEME_QUESTION` non rempli sur un cas incertain | le cas reste `EN_ATTENTE`, rien n'est décidé à sa place |
 | `SOURCES_CORRIGEES` renseignée | remplace `sources[]` (les `doc_version` connues sont reportées) ; les sources retirées sont listées au rapport |
@@ -371,6 +407,45 @@ autres. Les suppressions sont listées dans `removed_sources` du rapport
 de promotion.
 
 ---
+
+## Régénération des réponses non conformes
+
+Rédiger une réponse complète coûte cher au métier, et un modèle structure
+mieux une réponse longue. Sur un « Presque » ou un « Non », le métier
+peut donc laisser `VERSION_CORRIGEE` vide. Il désigne les bonnes sources
+(ou valide celles qui sont citées) et, s'il le souhaite, dit en une
+phrase ce qui est faux (`CONSIGNE_CORRECTION`).
+
+1. `promote.py` passe le cas en `A_REGENERER`. Les corrections de
+   sources sont appliquées tout de suite.
+2. `regenerate.py` rend les pages de vérité terrain en images, à partir
+   des PDF de `DOCUMENTS_DIR`, et les envoie au VLM
+   (`REGENERATION_MODEL`). La consigne et la réponse rejetée
+   accompagnent les pages.
+3. Le brouillon arrive dans le projet B sur un asset jumeau
+   `<external_id>__relecture`, motif `RELECTURE_BROUILLON`, pré-rempli
+   dans `VERSION_CORRIGEE`. Le cas d'origine passe en `REGENERE`.
+4. Le métier relit avec les jobs habituels, puis `promote.py` verse le
+   texte sous l'origine `llm_regenere`.
+
+Un cas n'est jamais bloqué. Si les sources sont introuvables, si elles
+dépassent `REGENERATION_MAX_PAGES` ou si le modèle échoue
+`REGENERATION_MAX_ATTEMPTS` fois, l'asset de relecture est importé sans
+brouillon et explique pourquoi. Le rapport de promotion compte les
+brouillons promus (`drafts_promoted`) et ceux que le métier a retouchés
+(`drafts_edited`). Un taux de retouche durablement nul signale une
+validation machinale.
+
+**Vérification des sources.** Avec `DOCUMENTS_DIR`, `promote.py` refuse
+une liste de sources corrigées illisible ou qui cite un document ou une
+page absents. Le cas passe en `SOURCES_A_CORRIGER` et retourne dans la
+file du métier. Le plugin Kili (`plugin/main.py`, déployé par
+`deploy_plugin.py`) fait la même vérification dès la soumission, avec
+une issue qui dit quoi corriger. Les deux s'appuient sur la même
+fonction : `source_list_problems`.
+
+Conception, choix et limites : [REGENERATION.md](REGENERATION.md). Ce
+qui reste à faire : [A_DEVELOPPER.md](A_DEVELOPPER.md).
 
 ## Appariement d'une question
 
@@ -523,8 +598,9 @@ Projet B — revue prod  : cl…
 Puis, le cycle courant :
 
 ```bash
-# Amorcer un référentiel sur des données réelles
-uv run python scripts/bootstrap.py --entree data/samples/referentiel_initial.jsonl
+# Amorcer un référentiel sur des données réelles, et créer le projet B
+uv run python scripts/bootstrap.py --entree data/samples/referentiel_initial.jsonl \
+    --creer-projet-revue
 
 # Traiter un run de production (ajouter --hors-ligne pour se passer des clés)
 uv run python scripts/monitor_run.py \
@@ -533,7 +609,20 @@ uv run python scripts/monitor_run.py \
 
 # Après arbitrage du métier dans le projet B
 uv run python scripts/promote.py \
-    --projet-referentiel <ID_A> --projet-revue <ID_B>
+    --projet-referentiel <ID_A> --projet-revue <ID_B> --documents ./documents
+
+# Rédiger les brouillons des cas passés en A_REGENERER
+# (--hors-ligne : brouillon factice, sans clé ni appel au modèle)
+uv run python scripts/regenerate.py \
+    --projet-referentiel <ID_A> --projet-revue <ID_B> --documents ./documents
+
+# Les deux à la suite, sans chevauchement (voir « Planifier le cycle »)
+ID_A=<ID_A> ID_B=<ID_B> DOCUMENTS_DIR=./documents scripts/cycle.sh
+
+# Plugin de vérification des sources : assembler, envoyer, activer.
+# À relancer à chaque ajout ou mise à jour de document.
+uv run python scripts/deploy_plugin.py --documents ./documents \
+    --projet <ID_A> --projet <ID_B>
 
 # Constater la dérive documentaire (ne modifie rien)
 uv run python scripts/reverify_docs.py \
@@ -557,6 +646,26 @@ uv run python scripts/demo.py --teardown --project-id <ID>
  "cg_habitation_2024.pdf": "sha1:41d8ec5590aa"}
 ```
 
+### Planifier le cycle
+
+`scripts/cycle.sh` enchaîne `promote.py` puis `regenerate.py`. `flock`
+empêche deux cycles de se chevaucher. Aucun droit `sudo` n'est requis.
+Sur un serveur Linux, la crontab de l'utilisateur suffit (`crontab -e` ;
+tester d'abord `crontab -l`, qu'un `/etc/cron.allow` peut interdire) :
+
+```cron
+*/15 7-20 * * 1-5  cd /chemin/du/projet && ID_A=… ID_B=… DOCUMENTS_DIR=/chemin/documents UV=/chemin/absolu/uv scripts/cycle.sh >> logs/cycle.log 2>&1
+```
+
+Cron s'exécute avec un environnement presque vide. Il faut donc donner
+le chemin absolu de `uv` (variable `UV`) et créer `logs/`. Si cron est
+interdit, une boucle lancée dans `tmux` ou avec `nohup` fait l'affaire,
+mais elle ne survit pas à un redémarrage :
+
+```bash
+nohup bash -c 'while true; do scripts/cycle.sh; sleep 900; done' >> logs/cycle.log 2>&1 &
+```
+
 ### Variables d'environnement
 
 | Variable | Rôle |
@@ -567,6 +676,11 @@ uv run python scripts/demo.py --teardown --project-id <ID>
 | `KILI_CA_BUNDLE` | chemin d'un bundle de certificats, pour une instance derrière un proxy d'entreprise. Transmis à `Kili(verify=…)`. Si le fichier n'existe pas, le script **échoue** au lieu de retomber silencieusement sur les certificats du système. La vérification TLS n'est jamais désactivée. |
 | `ANTHROPIC_API_KEY` | LLM-as-judge ; inutile en `--hors-ligne` |
 | `JINA_API_KEY` | embeddings ; inutile en `--hors-ligne` |
+| `DOCUMENTS_DIR` | répertoire local des PDF sources ; le `doc_id` d'une source est le nom du fichier. Active la vérification d'existence des sources à la promotion, la régénération et le catalogue du plugin |
+| `REGENERATION_MODEL`, `REGENERATION_EFFORT` | modèle du VLM de régénération (`claude-opus-5-5`) et effort de raisonnement (`high`) |
+| `REGENERATION_DPI`, `REGENERATION_MAX_PAGES`, `REGENERATION_MAX_ATTEMPTS` | résolution du rendu des pages (150), plafond de pages par brouillon (20), tentatives avant abandon (3) |
+| `REGENERATION_STYLE_FILE` | fichier texte facultatif : consignes de forme du prompt de la RAG de production, ajoutées au prompt de rédaction |
+| `REGENERATION_FALLBACKS` | `true` par défaut : un refus du modèle est rejoué côté serveur sur le modèle de repli recommandé. À couper si une passerelle refuse ce paramètre |
 
 Les seuils, plafonds et modèles sont surchargeables de la même façon
 (voir `.env.example` et `src/rag_referentiel/config.py`).
@@ -576,7 +690,8 @@ Les seuils, plafonds et modèles sont surchargeables de la même façon
 | Fichier | Produit par | Contenu |
 | --- | --- | --- |
 | `reports/monitoring_<horodatage>.json` | `monitor_run.py` | volumes par décision, taux de conformité, latence, cas envoyés en revue |
-| `reports/promotion_<horodatage>.json` | `promote.py` | `promoted`, `rejected`, `variants_added`, `answers_replaced`, `answers_removed`, **`judge_business_disagreements`**, `unknown_markers`, `unreadable_sources`, `removed_sources` |
+| `reports/promotion_<horodatage>.json` | `promote.py` | `promoted`, `rejected`, `variants_added`, `answers_replaced`, `answers_removed`, **`judge_business_disagreements`**, `sent_to_regeneration`, `drafts_promoted`, **`drafts_edited`**, `sources_to_fix`, `unknown_markers`, `unreadable_sources`, `removed_sources`, `invalid_sources` |
+| `reports/regeneration_<horodatage>.json` | `regenerate.py` | `drafts_created`, `failures` (relectures sans brouillon), `retries_pending`, et pour chaque cas l'asset de relecture et l'éventuelle erreur |
 | `reports/derive_documentaire_<horodatage>.json` | `reverify_docs.py --rapport` | entrées dont une source a changé de version |
 | `reports/referentiel_export.jsonl` | `export_referentiel.py` | une ligne par entrée `ACTIF`, avec toutes ses formulations et ses sources |
 
@@ -677,7 +792,7 @@ comme un arbitrage humain.
 ## Développement
 
 ```bash
-uv run pytest          # 157 tests, entièrement hors ligne
+uv run pytest          # 196 tests, entièrement hors ligne
 uv run ruff check .
 ```
 
@@ -709,7 +824,7 @@ src/rag_referentiel/
   richtext.py             briques du format rich text Kili
   rendering.py            composition des cartes
   markdown_to_richtext.py conversion du markdown de la RAG
-  sources.py              analyse et mise en forme des listes de sources
+  sources.py              analyse, vérification et mise en forme des sources
   matching.py             QuestionMatcher, HybridMatcher, LexicalMatcher
   embeddings.py           EmbeddingBackend, Jina, FakeEmbeddings
   judge.py                AnswerJudge, Claude et hors ligne
@@ -717,8 +832,12 @@ src/rag_referentiel/
   storage.py              écriture avec repli de taille
   referentiel.py          projet A : lecture, écriture, promotion
   revue.py                projet B : création et lecture des cas
-scripts/                  bootstrap, monitor_run, promote, reverify_docs,
-                          demo, probe_richtext, export_referentiel,
+  documents.py            PDF sources locaux : pages, rendu en image
+  regeneration.py         rédaction des brouillons par VLM
+plugin/main.py            plugin Kili de vérification des sources
+scripts/                  bootstrap, monitor_run, promote, regenerate,
+                          reverify_docs, deploy_plugin, cycle.sh, demo,
+                          probe_richtext, export_referentiel,
                           generate_sample_data
 data/samples/             jeux factices (aucune donnée réelle)
 tests/                    pytest, hors ligne

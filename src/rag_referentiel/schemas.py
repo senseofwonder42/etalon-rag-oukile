@@ -12,14 +12,26 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Status = Literal["ACTIF", "A_REVERIFIER", "ARCHIVE"]
-Origin = Literal["metier", "rag_valide", "rag_corrige"]
+Origin = Literal["metier", "rag_valide", "rag_corrige", "llm_regenere"]
 Reason = Literal[
     "NOUVELLE_QUESTION",
     "DIVERGENCE",
     "APPARIEMENT_INCERTAIN",
     "REVERIFICATION_DOC",
+    "RELECTURE_BROUILLON",
 ]
-ReviewStatus = Literal["EN_ATTENTE", "PROMU", "REJETE"]
+# `A_REGENERER` : arbitré « Presque » ou « Non » sans version corrigée,
+# un brouillon reste à rédiger. `REGENERE` : le brouillon est parti en
+# relecture sur un asset jumeau. `SOURCES_A_CORRIGER` : la liste de
+# sources saisie cite un document ou une page qui n'existe pas.
+ReviewStatus = Literal[
+    "EN_ATTENTE",
+    "PROMU",
+    "REJETE",
+    "A_REGENERER",
+    "REGENERE",
+    "SOURCES_A_CORRIGER",
+]
 
 
 class Source(BaseModel):
@@ -111,6 +123,15 @@ class ReviewCase(BaseModel):
     question_id_candidat: str | None = None
     statut_revue: ReviewStatus = "EN_ATTENTE"
     repli_texte: bool = False
+    # --- Régénération (cas d'origine) ---------------------------------
+    tentatives_regeneration: int = 0
+    # --- Relecture d'un brouillon (asset jumeau) ----------------------
+    # Sur un asset `RELECTURE_BROUILLON`, `candidate_answer` porte le
+    # brouillon rédigé par le VLM, vide si la rédaction a échoué.
+    cas_origine: str | None = None
+    consigne_correction: str | None = None
+    reponse_rejetee: str | None = None
+    erreur_regeneration: str | None = None
 
 
 class ProductionOccurrence(BaseModel):

@@ -12,6 +12,7 @@ from _commun import settings, write_json
 from loguru import logger
 
 from rag_referentiel.client import create_client
+from rag_referentiel.documents import DocumentStore
 from rag_referentiel.referentiel import promote_batch
 
 
@@ -31,6 +32,16 @@ def main() -> None:
         help="Projet B.",
     )
     parser.add_argument(
+        "--documents",
+        dest="documents_dir",
+        type=Path,
+        default=None,
+        help=(
+            "Répertoire des PDF sources (sinon DOCUMENTS_DIR) : active la "
+            "vérification d'existence des sources corrigées."
+        ),
+    )
+    parser.add_argument(
         "--rapport",
         dest="report_path",
         type=Path,
@@ -40,18 +51,36 @@ def main() -> None:
     arguments = parser.parse_args()
 
     config = settings()
+    documents_dir = arguments.documents_dir or config.documents_dir
+    page_counts = None
+    if documents_dir is not None:
+        page_counts = DocumentStore(documents_dir).page_counts()
+        logger.info(
+            "Sources vérifiées contre {} documents de {}.",
+            len(page_counts),
+            documents_dir,
+        )
+    else:
+        logger.warning(
+            "DOCUMENTS_DIR non renseigné : l'existence des sources "
+            "corrigées n'est pas vérifiée."
+        )
     kili = create_client(config)
     report = promote_batch(
         kili,
         arguments.reference_project,
         arguments.review_project,
         config,
+        page_counts,
     )
     logger.info(
-        "{} cas lus · {} promus · {} rejetés · {} laissés en attente.",
+        "{} cas lus · {} promus · {} rejetés · {} à régénérer · "
+        "{} sources à corriger · {} laissés en attente.",
         report.cases_read,
         report.promoted,
         report.rejected,
+        report.sent_to_regeneration,
+        report.sources_to_fix,
         report.skipped,
     )
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")

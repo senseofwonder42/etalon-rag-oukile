@@ -18,7 +18,7 @@ from .labels import (
     transcription,
 )
 from .normalisation import compute_review_external_id
-from .rendering import render_review_asset
+from .rendering import render_draft_review_asset, render_review_asset
 from .schemas import Answer, ReviewCase, ReviewStatus
 from .sources import display_metadata
 from .storage import prepare_payload
@@ -30,6 +30,7 @@ CASE_FIELDS = [
     "status",
     "labels.author.email",
     "labels.createdAt",
+    "labels.id",
     "labels.jsonResponse",
     "labels.labelType",
 ]
@@ -45,6 +46,8 @@ class ReviewLabel(BaseModel):
     corrected_version: str | None = None
     sources_relevant: str | None = None
     corrected_sources: str | None = None
+    correction_instruction: str | None = None
+    label_id: str | None = None
 
 
 class ArbitratedCase(BaseModel):
@@ -142,7 +145,12 @@ def create_cases(
 
     template = settings.document_url_template
     for case in cases:
-        rendering = render_review_asset(
+        render = (
+            render_draft_review_asset
+            if case.motif == "RELECTURE_BROUILLON"
+            else render_review_asset
+        )
+        rendering = render(
             case,
             answers_by_question.get(
                 case.question_id_candidat or case.question_id, []
@@ -171,27 +179,28 @@ def create_cases(
 
 
 def read_arbitrated_cases(
-    kili: object, project_id: str
+    kili: object, project_id: str, status: ReviewStatus = "EN_ATTENTE"
 ) -> list[ArbitratedCase]:
-    """Read the pending cases that carry a business arbitration.
+    """Read the cases of a given status that carry a business arbitration.
 
     Args:
         kili: Kili client.
         project_id: Identifier of the review project.
+        status: `statut_revue` of the cases to read.
 
     Returns:
-        The cases whose `statut_revue` is `EN_ATTENTE` and that carry at
+        The cases whose `statut_revue` is `status` and that carry at
         least one label.
     """
     assets = kili.assets(
         project_id=project_id,
         fields=CASE_FIELDS,
-        metadata_where={"statut_revue": "EN_ATTENTE"},
+        metadata_where={"statut_revue": status},
     )
     result: list[ArbitratedCase] = []
     for asset in assets:
         metadata = load_metadata(asset.get("jsonMetadata"))
-        if metadata.get("statut_revue") != "EN_ATTENTE":
+        if metadata.get("statut_revue") != status:
             continue
         raw_label = latest_label(asset.get("labels") or [])
         if raw_label is None:
@@ -266,4 +275,8 @@ def _parse_label(label: dict) -> ReviewLabel:
         corrected_version=transcription(response, "VERSION_CORRIGEE"),
         sources_relevant=category(response, "SOURCES_PERTINENTES"),
         corrected_sources=transcription(response, "SOURCES_CORRIGEES"),
+        correction_instruction=transcription(
+            response, "CONSIGNE_CORRECTION"
+        ),
+        label_id=label.get("id"),
     )

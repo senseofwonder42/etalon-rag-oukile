@@ -20,7 +20,7 @@ from typing import TypeVar
 from loguru import logger
 
 #: Clés dont le contenu peut atteindre une taille arbitraire.
-LONG_TEXT_KEYS = ("candidate_answer",)
+LONG_TEXT_KEYS = ("candidate_answer", "reponse_rejetee")
 
 _SIZE_ERROR_PATTERNS = (
     "too large",

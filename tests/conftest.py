@@ -17,6 +17,7 @@ class FakeKili:
         self.projects = {}
         self.data = {}
         self.calls = []
+        self.issues = []
 
     # --- projets ------------------------------------------------------
     def create_project(
@@ -69,10 +70,19 @@ class FakeKili:
             }
         return {"id": project_id}
 
-    def assets(self, project_id, fields=None, metadata_where=None, **kwargs):
+    def assets(
+        self,
+        project_id,
+        fields=None,
+        metadata_where=None,
+        asset_id=None,
+        **kwargs,
+    ):
         del fields, kwargs
         result = []
         for asset in self.data.get(project_id, {}).values():
+            if asset_id is not None and asset["id"] != asset_id:
+                continue
             metadata = asset["jsonMetadata"] or {}
             if metadata_where and any(
                 metadata.get(key) != value
@@ -89,9 +99,12 @@ class FakeKili:
         json_metadatas=None,
         json_contents=None,
         priorities=None,
+        asset_ids=None,
         **kwargs,
     ):
         del kwargs
+        if asset_ids is not None:
+            project_id, external_ids = self._locate(asset_ids)
         registry = self.data[project_id]
         for index, external_id in enumerate(external_ids):
             asset = registry[external_id]
@@ -105,7 +118,11 @@ class FakeKili:
                 asset["priority"] = priorities[index]
         return [{"id": registry[e]["id"]} for e in external_ids]
 
-    def send_back_to_queue(self, project_id=None, external_ids=None):
+    def send_back_to_queue(
+        self, project_id=None, external_ids=None, asset_ids=None
+    ):
+        if asset_ids is not None:
+            project_id, external_ids = self._locate(asset_ids)
         for external_id in external_ids:
             self.data[project_id][external_id]["status"] = "TODO"
         self.calls.append(("send_back_to_queue", tuple(external_ids)))
@@ -137,7 +154,35 @@ class FakeKili:
             )
         return [{"id": "label"} for _ in asset_external_id_array]
 
+    # --- issues -------------------------------------------------------
+    def create_issues(
+        self,
+        project_id,
+        label_id_array,
+        object_mid_array=None,
+        text_array=None,
+    ):
+        del object_mid_array
+        for label_id, text in zip(label_id_array, text_array, strict=True):
+            self.issues.append(
+                {"project_id": project_id, "label_id": label_id, "text": text}
+            )
+        return [{"id": f"issue_{len(self.issues)}"}]
+
     # --- utilitaires de test -----------------------------------------
+    def _locate(self, asset_ids):
+        """Find the project and external ids of internal asset ids."""
+        for project_id, registry in self.data.items():
+            found = [
+                external_id
+                for asset_id in asset_ids
+                for external_id, asset in registry.items()
+                if asset["id"] == asset_id
+            ]
+            if found:
+                return project_id, found
+        raise KeyError(asset_ids)
+
     def add_label(
         self,
         project_id,
