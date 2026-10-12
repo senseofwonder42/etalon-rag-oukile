@@ -69,30 +69,37 @@ class FakeEmbeddings:
 
 
 class JinaEmbeddings:
-    """Embedding backend backed by the Jina API."""
+    """Embedding backend backed by an OpenAI compatible embeddings API.
+
+    It serves the Jina API as well as a local server (llama.cpp) exposing
+    the Jina weights.
+    """
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         model: str,
         base_url: str,
         client: httpx.Client | None = None,
+        prefix: str = "",
     ) -> None:
         """Initialize the backend.
 
         Args:
-            api_key: Jina API key.
+            api_key: API key; `None` for a server that requires none.
             model: Identifier of the embedding model.
             base_url: Root of the API, without trailing slash.
             client: HTTP client to reuse (useful for tests).
+            prefix: Text prepended to every input, as some models expect
+                when called through `/embeddings`.
         """
         self.model = model
         self.base_url = base_url.rstrip("/")
+        self.prefix = prefix
         self._client = client or httpx.Client(timeout=30.0)
-        self._headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        self._headers = {"Content-Type": "application/json"}
+        if api_key:
+            self._headers["Authorization"] = f"Bearer {api_key}"
 
     def check_model_available(self) -> None:
         """Check that the requested model is exposed by the service.
@@ -106,8 +113,9 @@ class JinaEmbeddings:
             response = self._client.get(url, headers=self._headers)
         except httpx.HTTPError as error:
             raise ModelUnavailableError(
-                f"Impossible d'interroger {url} : {error}. Vérifier la clé "
-                "JINA_API_KEY et l'URL du service."
+                f"Impossible d'interroger {url} : {error}. Vérifier que le "
+                "serveur d'embeddings tourne (scripts/serve_embeddings.sh "
+                "status) et l'URL JINA_BASE_URL."
             ) from error
         if response.status_code != httpx.codes.OK:
             raise ModelUnavailableError(
@@ -128,7 +136,7 @@ class JinaEmbeddings:
         logger.info("Modèle d'embeddings disponible : {}", self.model)
 
     def encode(self, texts: list[str]) -> list[list[float]]:
-        """Encode texts through the Jina API.
+        """Encode texts through the embeddings API.
 
         Args:
             texts: Texts to encode.
@@ -144,7 +152,10 @@ class JinaEmbeddings:
         response = self._client.post(
             f"{self.base_url}/embeddings",
             headers=self._headers,
-            json={"model": self.model, "input": texts},
+            json={
+                "model": self.model,
+                "input": [f"{self.prefix}{text}" for text in texts],
+            },
         )
         if response.status_code != httpx.codes.OK:
             raise RuntimeError(

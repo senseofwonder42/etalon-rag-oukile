@@ -69,8 +69,8 @@ l'environnement), aucun déploiement du plugin chez Kili.
 
 `pymupdf` est désormais une dépendance déclarée. Il était présent dans
 l'environnement mais absent de `uv.lock`, et un `uv sync` l'aurait
-retiré. `bootstrap.py --creer-projet-revue` crée le projet B pour des
-données réelles, ce que seule la démonstration savait faire.
+retiré. `bootstrap_revue.py` crée le projet B pour des données réelles,
+ce que seule la démonstration savait faire.
 
 ## Correction ciblée d'une formulation (option A)
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from _commun import settings, write_json
 from loguru import logger
 
-from rag_referentiel.client import create_client
+from rag_referentiel.client import create_anthropic_client, create_client
 from rag_referentiel.config import Settings
 from rag_referentiel.documents import DocumentStore
 from rag_referentiel.regeneration import (
@@ -44,13 +44,11 @@ def build_drafter(config: Settings, offline: bool) -> AnswerDrafter:
             "ANTHROPIC_API_KEY absente : utiliser --hors-ligne ou "
             "renseigner la clé."
         )
-    import anthropic
-
     style = None
     if config.regeneration_style_file:
         style = config.regeneration_style_file.read_text(encoding="utf-8")
     return ClaudeDrafter(
-        client=anthropic.Anthropic(api_key=config.anthropic_api_key),
+        client=create_anthropic_client(config),
         model=config.regeneration_model,
         effort=config.regeneration_effort,
         style=style,

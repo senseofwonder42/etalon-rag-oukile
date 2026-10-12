@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -89,3 +91,23 @@ def test_an_unreachable_service_fails_with_a_clear_message():
     backend = _backend(httpx.Response(503, text="indisponible"))
     with pytest.raises(ModelUnavailableError, match="503"):
         backend.check_model_available()
+
+
+def test_the_prefix_is_prepended_and_no_key_means_no_header():
+    seen = {}
+
+    def answer(request):
+        seen["headers"] = request.headers
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"embedding": [1.0]}]})
+
+    backend = JinaEmbeddings(
+        api_key=None,
+        model="local",
+        base_url="http://127.0.0.1:8080/v1",
+        client=httpx.Client(transport=httpx.MockTransport(answer)),
+        prefix="Document: ",
+    )
+    assert backend.encode(["Quel délai ?"]) == [[1.0]]
+    assert seen["body"]["input"] == ["Document: Quel délai ?"]
+    assert "authorization" not in seen["headers"]

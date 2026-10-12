@@ -8,9 +8,14 @@
 #
 # Deux cycles ne se chevauchent jamais : `flock` sort sans rien faire si
 # un cycle tourne encore. Ni l'un ni l'autre ne demande de droits sudo.
+#
+# La sortie va dans logs/cycle.log, qui tourne au-delà de 10 Mio (voir
+# _rotation.sh) : inutile de la rediriger depuis la crontab.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# shellcheck source=scripts/_rotation.sh
+source scripts/_rotation.sh
 : "${ID_A:?ID_A non renseigné}"
 : "${ID_B:?ID_B non renseigné}"
 : "${DOCUMENTS_DIR:?DOCUMENTS_DIR non renseigné}"
@@ -18,6 +23,11 @@ UV="${UV:-uv}"
 
 exec 9>"${TMPDIR:-/tmp}/rag-referentiel-cycle.lock"
 flock -n 9 || { echo "Un cycle tourne déjà : rien à faire."; exit 0; }
+
+mkdir -p logs
+rotate_log logs/cycle.log
+exec >> logs/cycle.log 2>&1
+echo "=== Cycle du $(date '+%Y-%m-%d %H:%M:%S') ==="
 
 "$UV" run python scripts/promote.py \
     --projet-referentiel "$ID_A" --projet-revue "$ID_B" \

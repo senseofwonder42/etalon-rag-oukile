@@ -1,6 +1,9 @@
+import ssl
+
+import certifi
 import pytest
 
-from rag_referentiel.client import tls_verification
+from rag_referentiel.client import ssl_verification, tls_verification
 from rag_referentiel.config import Settings
 
 
@@ -22,8 +25,16 @@ def test_a_missing_bundle_fails_rather_than_using_the_system_store(
         tls_verification(str(tmp_path / "absent.pem"))
 
 
-def test_the_bundle_is_read_from_the_environment(monkeypatch, tmp_path):
+@pytest.mark.parametrize("variable", ["CA_BUNDLE", "KILI_CA_BUNDLE"])
+def test_the_bundle_is_read_from_the_environment(
+    monkeypatch, tmp_path, variable
+):
     bundle = tmp_path / "ca.pem"
     bundle.write_text("x", encoding="utf-8")
-    monkeypatch.setenv("KILI_CA_BUNDLE", str(bundle))
-    assert Settings().kili_ca_bundle == str(bundle)
+    monkeypatch.setenv(variable, str(bundle))
+    assert Settings().ca_bundle == str(bundle)
+
+
+def test_httpx_clients_get_an_ssl_context_built_on_the_bundle():
+    assert ssl_verification(None) is True
+    assert isinstance(ssl_verification(certifi.where()), ssl.SSLContext)

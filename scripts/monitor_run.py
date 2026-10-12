@@ -13,7 +13,11 @@ from pathlib import Path
 from _commun import read_jsonl, settings, write_json
 from loguru import logger
 
-from rag_referentiel.client import create_client
+from rag_referentiel.client import (
+    create_anthropic_client,
+    create_client,
+    create_http_client,
+)
 from rag_referentiel.config import Settings
 from rag_referentiel.embeddings import JinaEmbeddings
 from rag_referentiel.judge import AnswerJudge, ClaudeJudge, LexicalJudge
@@ -48,21 +52,19 @@ def build_matcher(
         The matcher to use.
 
     Raises:
-        RuntimeError: If the Jina key is missing in hybrid mode.
+        ModelUnavailableError: If the embeddings server does not expose
+            the model, in hybrid mode.
     """
     if offline:
         return LexicalMatcher(
             entries, config.match_threshold_high, config.match_threshold_low
         )
-    if not config.jina_api_key:
-        raise RuntimeError(
-            "JINA_API_KEY absente : utiliser --hors-ligne ou renseigner "
-            "la clé."
-        )
     backend = JinaEmbeddings(
         api_key=config.jina_api_key,
         model=config.embedding_model,
         base_url=config.jina_base_url,
+        client=create_http_client(config),
+        prefix=config.embedding_prefix,
     )
     backend.check_model_available()
     return HybridMatcher(
@@ -95,10 +97,8 @@ def build_judge(config: Settings, offline: bool) -> AnswerJudge:
             "ANTHROPIC_API_KEY absente : utiliser --hors-ligne ou "
             "renseigner la clé."
         )
-    import anthropic
-
     return ClaudeJudge(
-        client=anthropic.Anthropic(api_key=config.anthropic_api_key),
+        client=create_anthropic_client(config),
         model=config.judge_model,
         max_references=config.max_judge_references,
     )

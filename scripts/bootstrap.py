@@ -2,8 +2,7 @@
 
 Creates the Kili project when no identifier is given, then imports one
 entry per question. Entries already present are not imported again.
-With `--creer-projet-revue`, also creates the review project (project B)
-that `monitor_run.py` fills.
+The review project (project B) is created by `bootstrap_revue.py`.
 """
 
 import argparse
@@ -19,7 +18,6 @@ from rag_referentiel.referentiel import (
     import_entries,
     load_entries,
 )
-from rag_referentiel.revue import create_project as create_review_project
 from rag_referentiel.schemas import SeedEntry, today
 
 
@@ -38,12 +36,6 @@ def main() -> None:
         dest="project_id",
         default=None,
         help="Projet A existant ; créé si absent.",
-    )
-    parser.add_argument(
-        "--creer-projet-revue",
-        dest="create_review",
-        action="store_true",
-        help="Créer aussi le projet B, vide, et afficher son identifiant.",
     )
     parser.add_argument(
         "--auteur",
@@ -88,12 +80,6 @@ def main() -> None:
         project_id,
         len(entries),
     )
-    if arguments.create_review:
-        review_id = create_review_project(kili, config.review_project_title)
-        logger.info(
-            "Projet de revue créé : {} — à passer à --projet-revue.",
-            review_id,
-        )
 
 
 if __name__ == "__main__":

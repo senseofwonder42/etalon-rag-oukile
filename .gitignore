@@ -7,3 +7,5 @@ __pycache__/
 reports/*.json
 reports/*.jsonl
 build/
+logs/
+models/

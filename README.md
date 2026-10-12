@@ -41,11 +41,16 @@ parcourir dans l'ordre, la première fois.
 4. **`send_back_to_queue` sur un asset déjà labellisé.** Utilisé par
    `reverify_docs.py --declencher`. Vérifier que l'asset revient bien dans
    la file `TODO` de l'annotateur **sans perdre ses labels**.
-5. **Disponibilité du modèle d'embeddings.** La valeur par défaut est
-   `jina-embeddings-v5-nano`. `JinaEmbeddings.check_model_available()` interroge
-   `GET {URL_JINA}/models` et échoue avec un message clair si le modèle
-   n'y figure pas. Le point d'entrée `/models` et l'identifiant du modèle
-   n'ont pas été vérifiés contre le service réel.
+5. **Serveur d'embeddings local.** `jina-embeddings-v5-text-small-text-matching`,
+   servi par llama.cpp (voir « Serveur d'embeddings local »). La chaîne a
+   tourné de bout en bout sur macOS (`/v1/models`, `/v1/embeddings`,
+   `check_model_available()`, appariement hybride des données factices),
+   **pas encore sur le serveur Linux** : vérifier que l'archive
+   `ubuntu-x64` démarre (bibliothèques système, jeu d'instructions du
+   processeur) avec `scripts/serve_embeddings.sh start`, puis
+   `scripts/check_env.py`. Les seuils d'appariement sont calibrés sur
+   l'ancien modèle : à recalibrer en bêta (deux questions sans rapport
+   obtiennent déjà autour de 0,55 de similarité).
 6. **Signatures 2.142.1 utilisées.** Toutes ont été relues dans la roue
    installée, aucune n'a été exécutée contre une instance :
    `create_project(title, input_type, json_interface, description)`,
@@ -179,7 +184,7 @@ justement à auditer.
 | Un asset | une question | une occurrence de production |
 | Rôle | état de vérité | file de travail du métier |
 | `external_id` | `q_<sha1(question normalisée)[:12]>` | `<question_id>__<run_id>` |
-| Écrit par | `bootstrap.py`, `promote.py`, `reverify_docs.py` | `monitor_run.py`, `promote.py` |
+| Écrit par | `bootstrap.py`, `promote.py`, `reverify_docs.py` | `bootstrap_revue.py`, `monitor_run.py`, `promote.py` |
 | Annoté | à la création et lors des campagnes de revérification | en continu |
 
 La normalisation (minuscules, sans accents, sans ponctuation, espaces
@@ -466,9 +471,9 @@ entre les deux → `INCERTAIN`, le cas part en revue avec le job
 `NOUVELLE`.
 
 Le backend d'embeddings est derrière le protocole `EmbeddingBackend` :
-`JinaEmbeddings` (modèle configurable, disponibilité vérifiée au
-démarrage) et `FakeEmbeddings` (déterministe, sans réseau, pour les
-tests). Le référentiel étant petit, l'index est reconstruit en mémoire à
+`JinaEmbeddings` (toute API compatible OpenAI, le serveur local par
+défaut ; modèle configurable, disponibilité vérifiée au démarrage) et
+`FakeEmbeddings` (déterministe, sans réseau, pour les tests). Le référentiel étant petit, l'index est reconstruit en mémoire à
 chaque exécution : **pas de base vectorielle**.
 
 ## Accumulation des formulations
@@ -546,6 +551,12 @@ mêmes données produisent exactement le même arbre.
 uv sync
 cp .env.example .env   # puis renseigner KILI_API_KEY
 
+# 0 bis. Embeddings locaux (voir « Serveur d'embeddings local »), puis
+# diagnostic de l'environnement — n'écrit rien
+uv run python scripts/download_embeddings.py
+scripts/serve_embeddings.sh start
+uv run python scripts/check_env.py --documents ./documents
+
 # 1. Vérifier ce que le serveur rend vraiment (5 minutes)
 uv run python scripts/probe_richtext.py
 
@@ -598,9 +609,11 @@ Projet B — revue prod  : cl…
 Puis, le cycle courant :
 
 ```bash
-# Amorcer un référentiel sur des données réelles, et créer le projet B
-uv run python scripts/bootstrap.py --entree data/samples/referentiel_initial.jsonl \
-    --creer-projet-revue
+# Amorcer le référentiel (projet A) sur des données réelles
+uv run python scripts/bootstrap.py --entree data/samples/referentiel_initial.jsonl
+
+# Créer le projet B, vide (son identifiant est à passer à --projet-revue)
+uv run python scripts/bootstrap_revue.py
 
 # Traiter un run de production (ajouter --hors-ligne pour se passer des clés)
 uv run python scripts/monitor_run.py \
@@ -654,17 +667,64 @@ Sur un serveur Linux, la crontab de l'utilisateur suffit (`crontab -e` ;
 tester d'abord `crontab -l`, qu'un `/etc/cron.allow` peut interdire) :
 
 ```cron
-*/15 7-20 * * 1-5  cd /chemin/du/projet && ID_A=… ID_B=… DOCUMENTS_DIR=/chemin/documents UV=/chemin/absolu/uv scripts/cycle.sh >> logs/cycle.log 2>&1
+*/15 7-20 * * 1-5  cd /chemin/du/projet && ID_A=… ID_B=… DOCUMENTS_DIR=/chemin/documents UV=/chemin/absolu/uv scripts/cycle.sh
+@reboot            cd /chemin/du/projet && scripts/serve_embeddings.sh start
 ```
 
 Cron s'exécute avec un environnement presque vide. Il faut donc donner
-le chemin absolu de `uv` (variable `UV`) et créer `logs/`. Si cron est
-interdit, une boucle lancée dans `tmux` ou avec `nohup` fait l'affaire,
-mais elle ne survit pas à un redémarrage :
+le chemin absolu de `uv` (variable `UV`). Si cron est interdit, une
+boucle lancée dans `tmux` ou avec `nohup` fait l'affaire, mais elle ne
+survit pas à un redémarrage :
 
 ```bash
-nohup bash -c 'while true; do scripts/cycle.sh; sleep 900; done' >> logs/cycle.log 2>&1 &
+nohup bash -c 'while true; do scripts/cycle.sh; sleep 900; done' > /dev/null 2>&1 &
 ```
+
+**Journaux.** `cycle.sh` écrit lui-même dans `logs/cycle.log` : inutile
+de rediriger sa sortie. Au début de chaque cycle, un journal de plus de
+10 Mio devient `cycle.log.1`, et ainsi de suite jusqu'à `cycle.log.5`,
+le plus ancien étant supprimé (`LOG_MAX_OCTETS`, `LOG_ARCHIVES`). Le
+serveur d'embeddings fait de même avec `logs/embeddings.log`, à chaque
+démarrage.
+
+### Serveur d'embeddings local
+
+L'API Jina n'étant pas joignable depuis le serveur, les poids tournent
+sur place. Modèle retenu : **`jina-embeddings-v5-text-small-text-matching`**
+(677 M de paramètres, 1 024 dimensions, 119 langues). Selon Jina, c'est
+le meilleur modèle multilingue sous le milliard de paramètres au MMTEB
+(67,7). La variante *text-matching* est entraînée pour comparer deux
+textes de même nature, ici deux questions. Des modèles plus gros font
+mieux (Qwen3-Embedding-8B : 70,6), mais ils demandent un GPU, ce qui
+n'est pas raisonnable pour apparier des questions courtes. Licence CC BY-NC 4.0 : usage non commercial.
+
+Il est servi par `llama-server` (llama.cpp) : un binaire autonome, sans
+Docker ni droits sudo, qui tourne sur CPU et expose une API compatible
+OpenAI. `JinaEmbeddings` l'appelle sans autre changement que
+`JINA_BASE_URL`.
+
+```bash
+# Sur un poste avec accès à internet : poids GGUF Q8_0 (640 Mo) et
+# llama.cpp pour Linux, versions figées, empreintes SHA-256 vérifiées
+uv run python scripts/download_embeddings.py
+rsync -a models/ serveur:/chemin/du/projet/models/
+
+# Sur le serveur
+scripts/serve_embeddings.sh start     # attend que /health réponde
+scripts/serve_embeddings.sh status
+scripts/serve_embeddings.sh stop
+```
+
+Le serveur écoute sur `127.0.0.1:8080` (`EMBEDDINGS_PORT`) et expose le
+modèle sous l'alias `EMBEDDING_MODEL`. Les deux valeurs doivent
+correspondre à `JINA_BASE_URL` et `EMBEDDING_MODEL` dans le `.env`.
+Appelée par `/v1/embeddings`, la variante *text-matching* attend le
+préfixe `Document: ` devant chaque texte (`EMBEDDING_PREFIX`). Sans lui,
+deux formulations d'une même question tombaient de 0,85 à 0,31 de
+similarité.
+
+Pour essayer en local sur un Mac :
+`download_embeddings.py --plateforme macos-arm64`.
 
 ### Variables d'environnement
 
@@ -673,9 +733,11 @@ nohup bash -c 'while true; do scripts/cycle.sh; sleep 900; done' >> logs/cycle.l
 | `KILI_API_KEY` | obligatoire pour tout script qui parle à l'instance |
 | `KILI_API_ENDPOINT` | endpoint GraphQL ; SaaS par défaut |
 | `DOCUMENT_URL_TEMPLATE` | gabarit d'URL des documents sources, par exemple `https://…/Documents/{doc_id}#page={page}`. Renseigné, il ajoute une colonne « Lien » au tableau des sources et remplit la clé `url` de la metadata. Voir « Consulter le document source » plus bas. |
-| `KILI_CA_BUNDLE` | chemin d'un bundle de certificats, pour une instance derrière un proxy d'entreprise. Transmis à `Kili(verify=…)`. Si le fichier n'existe pas, le script **échoue** au lieu de retomber silencieusement sur les certificats du système. La vérification TLS n'est jamais désactivée. |
-| `ANTHROPIC_API_KEY` | LLM-as-judge ; inutile en `--hors-ligne` |
-| `JINA_API_KEY` | embeddings ; inutile en `--hors-ligne` |
+| `CA_BUNDLE` | chemin d'un bundle de certificats, pour un réseau derrière un proxy d'entreprise. Utilisé par les trois clients : Kili, Anthropic et le serveur d'embeddings. Il remplace les certificats du système : il doit donc aussi contenir les autorités publiques si certains hôtes ne passent pas par le proxy. Si le fichier n'existe pas, le script **échoue** au lieu de retomber silencieusement sur les certificats du système. La vérification TLS n'est jamais désactivée. L'ancien nom `KILI_CA_BUNDLE` reste lu. |
+| `ANTHROPIC_API_KEY` | LLM-as-judge et régénération ; inutile en `--hors-ligne` |
+| `ANTHROPIC_BASE_URL` | passerelle interne vers l'API Anthropic, lue directement par le SDK |
+| `JINA_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_PREFIX` | serveur d'embeddings (`http://127.0.0.1:8080/v1`), alias du modèle et préfixe des textes (`Document: `). Voir « Serveur d'embeddings local » |
+| `JINA_API_KEY` | facultative : seulement pour l'API Jina hébergée |
 | `DOCUMENTS_DIR` | répertoire local des PDF sources ; le `doc_id` d'une source est le nom du fichier. Active la vérification d'existence des sources à la promotion, la régénération et le catalogue du plugin |
 | `REGENERATION_MODEL`, `REGENERATION_EFFORT` | modèle du VLM de régénération (`claude-opus-5-5`) et effort de raisonnement (`high`) |
 | `REGENERATION_DPI`, `REGENERATION_MAX_PAGES`, `REGENERATION_MAX_ATTEMPTS` | résolution du rendu des pages (150), plafond de pages par brouillon (20), tentatives avant abandon (3) |
@@ -835,9 +897,10 @@ src/rag_referentiel/
   documents.py            PDF sources locaux : pages, rendu en image
   regeneration.py         rédaction des brouillons par VLM
 plugin/main.py            plugin Kili de vérification des sources
-scripts/                  bootstrap, monitor_run, promote, regenerate,
-                          reverify_docs, deploy_plugin, cycle.sh, demo,
-                          probe_richtext, export_referentiel,
+scripts/                  bootstrap, bootstrap_revue, monitor_run, promote,
+                          regenerate, reverify_docs, deploy_plugin, cycle.sh,
+                          check_env, download_embeddings, serve_embeddings.sh,
+                          demo, probe_richtext, export_referentiel,
                           generate_sample_data
 data/samples/             jeux factices (aucune donnée réelle)
 tests/                    pytest, hors ligne

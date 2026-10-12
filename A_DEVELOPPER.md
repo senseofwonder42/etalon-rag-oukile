@@ -132,5 +132,5 @@ références) avant de filtrer.
 - **Test en échec déjà connu** : `test_an_unaccented_document_name_is_left_as_is_in_its_url`
   (nom de document accentué). Il échouait avant ces travaux et n'y est pas lié.
 - **Création du projet B pour des données réelles.** Seule la démonstration le créait.
-  `bootstrap.py --creer-projet-revue` comble ce manque, mais la démonstration et
-  l'amorçage restent deux chemins séparés.
+  `bootstrap_revue.py` le crée désormais, vide, comme `bootstrap.py` pour le projet A ;
+  la démonstration reste un chemin séparé.

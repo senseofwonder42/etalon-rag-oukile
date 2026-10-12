@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_KILI_ENDPOINT = (
@@ -25,10 +25,15 @@ class Settings(BaseSettings):
     # --- Accès aux services externes -------------------------------------
     kili_api_key: str | None = None
     kili_api_endpoint: str = DEFAULT_KILI_ENDPOINT
-    # Chemin d'un bundle de certificats, pour une instance derrière un
-    # proxy d'entreprise. Transmis tel quel à `Kili(verify=...)`.
-    kili_ca_bundle: str | None = None
+    # Chemin d'un bundle de certificats, pour un réseau derrière un proxy
+    # d'entreprise. Utilisé par les trois clients : Kili, Anthropic et le
+    # serveur d'embeddings. `KILI_CA_BUNDLE`, l'ancien nom, reste lu.
+    ca_bundle: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ca_bundle", "kili_ca_bundle"),
+    )
     anthropic_api_key: str | None = None
+    # Facultative : un serveur d'embeddings local n'en demande pas.
     jina_api_key: str | None = None
 
     # --- Titres des deux projets Kili ------------------------------------
@@ -51,8 +56,14 @@ class Settings(BaseSettings):
     max_judge_references: int = Field(default=5, ge=1)
 
     # --- Embeddings -------------------------------------------------------
-    embedding_model: str = "jina-embeddings-v5-nano"
-    jina_base_url: str = "https://api.jina.ai/v1"
+    # Serveur local compatible OpenAI, lancé par `serve_embeddings.sh`.
+    # Le nom du modèle est l'alias sous lequel le serveur l'expose.
+    embedding_model: str = "jina-embeddings-v5-text-small-text-matching"
+    jina_base_url: str = "http://127.0.0.1:8080/v1"
+    # Préfixe attendu par la variante text-matching de Jina v5 quand elle
+    # est appelée par `/v1/embeddings`. Le vider pour l'API Jina, qui
+    # l'ajoute elle-même.
+    embedding_prefix: str = "Document: "
 
     # --- Publication des documents sources -------------------------------
     # Gabarit d'URL des documents, par exemple
